@@ -43,7 +43,16 @@ def main() -> None:
 
         application = build_application(settings.telegram_bot_token, on_decision)
         logger.info("Telegram listener starting (long polling)")
-        application.run_polling()  # blocks - this is the process's "run forever"
+        # bootstrap_retries=-1 verified directly from the installed library's
+        # own docstring (telegram.ext.Application.run_polling): "< 0 - retry
+        # indefinitely". The default is 0 (no retries) - a single failed
+        # connection attempt at startup (DNS hiccup, Telegram momentarily
+        # unreachable) would otherwise raise out of run_polling() uncaught,
+        # crashing this whole process - including the BackgroundScheduler
+        # already running in its own thread, which has nothing to do with
+        # Telegram and has no reason to die with it. Found by actually
+        # running this service, not assumed.
+        application.run_polling(bootstrap_retries=-1)  # blocks - this is the process's "run forever"
     else:
         logger.warning(
             "TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set - approvals cannot be received; "

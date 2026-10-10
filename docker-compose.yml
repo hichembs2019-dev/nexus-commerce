@@ -1,0 +1,11 @@
+services:
+  nexus-commerce:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - nexus_commerce_data:/data
+
+volumes:
+  nexus_commerce_data:

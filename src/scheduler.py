@@ -52,7 +52,12 @@ def run_daily(app: App, search_queries: list[str] | None = None) -> dict:
     """Spec's daily step: propose new products."""
     try:
         proposals = discover_new_products(
-            app.conn, app.cj, app.web_search, app.settings, app.agents, search_queries or DEFAULT_DISCOVERY_QUERIES
+            app.conn,
+            app.suppliers,
+            app.web_search,
+            app.settings,
+            app.agents,
+            search_queries or DEFAULT_DISCOVERY_QUERIES,
         )
         for proposal in proposals:
             _send_if_consensus_reached(app, proposal)

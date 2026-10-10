@@ -80,6 +80,20 @@ defines the interface and a fully-working mock; `RealWebSearchTool` raises
 web-search tool-use feature, Bing/Google Custom Search, SerpAPI, ...) is
 real, scoped, remaining work.
 
+## Supplier scope (owner's own later instruction widening spec SS1)
+
+The owner explicitly widened "CJ Dropshipping only" to "any legal supplier,
+anywhere" (`src/integrations/supplier_client.py`). This widens *sourcing*
+only - `new_product_discovery.py` now searches every registered supplier for
+the best margin. It does not widen *who gets paid*: `Executor` still resolves
+a `CJ_ORDER` proposal's supplier by name and calls that supplier's own
+`create_order()` - for any supplier other than "cj" (the only one with a
+real-path client today, itself still gated by the CJ section above), that
+call raises the same honest `NotImplementedError` rather than guessing a
+second, unverified API. `price_inventory_review.py` and `tracking_update.py`
+still assume every tracked order's supplier is "cj" - a known, documented
+scope limit of this pass, not an oversight.
+
 ## What this means in practice
 
 - Every DRY_RUN run and every automated test uses mocks for all four external

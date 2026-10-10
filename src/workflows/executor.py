@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from ..config import Settings
 from ..db.models import ActionType
-from ..integrations.cj_client import CJClient
 from ..integrations.shopify_client import ShopifyClient
+from ..integrations.supplier_client import SupplierRegistry
 
 
 class Executor:
-    def __init__(self, shopify: ShopifyClient, cj: CJClient, settings: Settings):
+    def __init__(self, shopify: ShopifyClient, suppliers: SupplierRegistry, settings: Settings):
         self._shopify = shopify
-        self._cj = cj
+        self._suppliers = suppliers
         self._settings = settings
 
     def execute(self, proposal) -> dict:
@@ -35,12 +35,26 @@ class Executor:
         payload = proposal.payload
 
         if proposal.action_type == ActionType.CJ_ORDER.value:
-            cj_order_id = self._cj.create_order(
+            # payload may name a supplier other than "cj" (new_product_discovery.py
+            # now searches every registered supplier - see supplier_client.py).
+            # Proposals order_fulfillment.py creates from a paid Shopify order
+            # carry no "supplier" key (Shopify itself does not track which
+            # supplier fulfils a line item), so "cj" - the one supplier with
+            # any real-path potential today - is the honest default, not a
+            # guess about the others.
+            supplier_name = payload.get("supplier", "cj")
+            supplier = self._suppliers.get(supplier_name)
+            cj_order_id = supplier.create_order(
                 product_id=payload["product_id"],
                 quantity=payload["quantity"],
                 shipping_address=payload["shipping_address"],
             )
-            return {"success": True, "dry_run": False, "detail": f"CJ order created: {cj_order_id}", "cj_order_id": cj_order_id}
+            return {
+                "success": True,
+                "dry_run": False,
+                "detail": f"{supplier_name} order created: {cj_order_id}",
+                "cj_order_id": cj_order_id,
+            }
 
         if proposal.action_type == ActionType.PUBLISH_PRODUCT.value:
             product_id = self._shopify.create_product(

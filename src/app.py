@@ -20,6 +20,7 @@ from .integrations.anthropic_client import (
 )
 from .integrations.cj_client import CJClient, MockCJClient, RealCJClient
 from .integrations.shopify_client import MockShopifyClient, RealShopifyClient, ShopifyClient
+from .integrations.supplier_client import SupplierRegistry
 from .integrations.telegram_client import MockTelegramClient, RealTelegramClient, TelegramClient
 from .tools.web_search import MockWebSearchTool, RealWebSearchTool, WebSearchTool
 from .workflows.executor import Executor
@@ -33,6 +34,7 @@ class App:
     conn: sqlite3.Connection
     shopify: ShopifyClient
     cj: CJClient
+    suppliers: SupplierRegistry
     telegram: TelegramClient
     web_search: WebSearchTool
     agents: list[Agent]
@@ -77,13 +79,19 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
         reasoning_clients = [MockAgentReasoningClient() for _ in range(5)]
     agents = build_five_agents(reasoning_clients)
 
-    executor = Executor(shopify, cj, settings)
+    # Only "cj" has any real-path potential today (see docs/UNVERIFIED.md);
+    # the registry exists so new_product_discovery.py can search additional
+    # suppliers the moment anyone registers one - no code change needed
+    # there, only here.
+    suppliers = SupplierRegistry({"cj": cj})
+    executor = Executor(shopify, suppliers, settings)
 
     return App(
         settings=settings,
         conn=conn,
         shopify=shopify,
         cj=cj,
+        suppliers=suppliers,
         telegram=telegram,
         web_search=web_search,
         agents=agents,

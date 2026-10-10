@@ -1,8 +1,18 @@
-"""Daily job (spec): "اقتراح منتجات جديدة" - search CJ's catalog, do a
-little competitor research via the web-search tool, and propose publishing
-anything that clears MIN_MARGIN. Every proposal still goes through
-submit_proposal() (limits -> 5-agent consensus) like everything else; this
-module only finds candidates and estimates a sale price for each.
+"""Daily job (spec, widened by the owner's own later instruction): "اقتراح
+منتجات جديدة" - search *every registered supplier's* catalog (not just CJ -
+"الوكلاء... ليسوا محددين مع من يشتغلون"), do a little competitor research via
+the web-search tool, and propose publishing whichever candidate clears
+MIN_MARGIN with the best profit, from whichever supplier offers it. Every
+proposal still goes through submit_proposal() (limits -> 5-agent consensus)
+like everything else; this module only finds candidates and estimates a sale
+price for each.
+
+Widening the SEARCH to every supplier is safe - it is read-only. It does not
+widen who actually gets PAID: a proposal sourced from a supplier whose client
+is still an honest NotImplementedError stub (see docs/UNVERIFIED.md) is still
+proposed and still goes through consensus + Telegram like any other, but its
+own execution will raise that same documented error rather than guessing an
+unverified API - exactly the discipline CJ's own RealCJClient already follows.
 """
 from __future__ import annotations
 
@@ -11,7 +21,7 @@ import sqlite3
 from ..agents.agent import Agent
 from ..config import Settings
 from ..db.models import ActionType, Proposal
-from ..integrations.cj_client import CJClient
+from ..integrations.supplier_client import SupplierRegistry
 from ..tools.profit_calculator import CostBreakdown, margin
 from ..tools.web_search import WebSearchTool
 from .pipeline import submit_proposal
@@ -31,7 +41,7 @@ def _suggest_sale_price(supplier_cost: float) -> float:
 
 def discover_new_products(
     conn: sqlite3.Connection,
-    cj: CJClient,
+    suppliers: SupplierRegistry,
     web_search: WebSearchTool,
     settings: Settings,
     agents: list[Agent],
@@ -40,7 +50,7 @@ def discover_new_products(
     proposals: list[Proposal] = []
 
     for query in search_queries:
-        for candidate in cj.search_products(query):
+        for supplier_name, candidate in suppliers.search_all(query):
             if candidate.price <= 0:
                 continue
 
@@ -62,14 +72,15 @@ def discover_new_products(
                 action_type=ActionType.PUBLISH_PRODUCT.value,
                 payload={
                     "title": candidate.title,
-                    "description": f"{candidate.title} - من مورّد CJ Dropshipping",
+                    "description": f"{candidate.title} - من مورّد {supplier_name}",
                     "price": sale_price,
                     "images": [],
+                    "supplier": supplier_name,
                     "cj_product_id": candidate.product_id,
                     "cost_breakdown": vars(breakdown),
                 },
                 justification=(
-                    f"found via CJ search '{query}'; {len(competitor_research)} "
+                    f"found via {supplier_name} search '{query}'; {len(competitor_research)} "
                     "competitor reference(s) found"
                 ),
                 cost=0,

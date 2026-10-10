@@ -14,6 +14,7 @@ from src.db.database import init_db
 from src.integrations.anthropic_client import MockAgentReasoningClient
 from src.integrations.cj_client import MockCJClient
 from src.integrations.shopify_client import MockShopifyClient
+from src.integrations.supplier_client import SupplierRegistry
 from src.integrations.telegram_client import MockTelegramClient
 from src.tools.web_search import MockWebSearchTool
 from src.workflows.executor import Executor
@@ -72,6 +73,11 @@ def cj():
 
 
 @pytest.fixture()
+def suppliers(cj):
+    return SupplierRegistry({"cj": cj})
+
+
+@pytest.fixture()
 def telegram():
     return MockTelegramClient()
 
@@ -82,5 +88,5 @@ def web_search():
 
 
 @pytest.fixture()
-def executor(shopify, cj, settings):
-    return Executor(shopify, cj, settings)
+def executor(shopify, suppliers, settings):
+    return Executor(shopify, suppliers, settings)

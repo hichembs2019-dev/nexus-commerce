@@ -117,24 +117,43 @@ def test_a_price_change_under_the_threshold_is_not_proposed(conn, settings, shop
 
 # ---- new_product_discovery --------------------------------------------------
 
-def test_a_product_clearing_min_margin_is_proposed_for_publishing(conn, settings, cj, web_search):
+def test_a_product_clearing_min_margin_is_proposed_for_publishing(conn, settings, cj, suppliers, web_search):
     cj.catalog.append(CJProduct(product_id="CJ-1", title="Phone Case", price=5.0))
 
     proposals = discover_new_products(
-        conn, cj, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
+        conn, suppliers, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
     )
 
     assert len(proposals) == 1
     assert proposals[0].payload["cj_product_id"] == "CJ-1"
+    assert proposals[0].payload["supplier"] == "cj"
     assert proposals[0].payload["price"] == 10.0  # 2x markup
     assert proposals[0].status == ProposalStatus.CONSENSUS_REACHED.value
 
 
-def test_a_product_with_zero_price_is_skipped(conn, settings, cj, web_search):
+def test_a_product_with_zero_price_is_skipped(conn, settings, cj, suppliers, web_search):
     cj.catalog.append(CJProduct(product_id="CJ-1", title="Phone Case", price=0.0))
 
     proposals = discover_new_products(
-        conn, cj, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
+        conn, suppliers, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
     )
 
     assert proposals == []
+
+
+def test_discovery_searches_every_registered_supplier_and_tags_the_source(conn, settings, web_search):
+    from src.integrations.cj_client import MockCJClient
+    from src.integrations.supplier_client import SupplierRegistry
+
+    cj_a = MockCJClient()
+    cj_a.catalog.append(CJProduct(product_id="A-1", title="Phone Stand", price=3.0))
+    cj_b = MockCJClient()
+    cj_b.catalog.append(CJProduct(product_id="B-1", title="Phone Grip", price=4.0))
+    registry = SupplierRegistry({"cj": cj_a, "other_supplier": cj_b})
+
+    proposals = discover_new_products(
+        conn, registry, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
+    )
+
+    suppliers_seen = {p.payload["supplier"] for p in proposals}
+    assert suppliers_seen == {"cj", "other_supplier"}

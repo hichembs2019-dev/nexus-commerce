@@ -23,14 +23,14 @@ from .conftest import all_approving_agents
 
 
 def test_full_journey_new_product_to_paid_order_to_supplier_order_to_tracking(
-    conn, settings, shopify, cj, telegram, web_search, executor
+    conn, settings, shopify, cj, suppliers, telegram, web_search, executor
 ):
     agents = all_approving_agents()
 
     # 1. A new CJ product is discovered and clears MIN_MARGIN -> proposed for publishing.
     cj.catalog.append(CJProduct(product_id="CJ-1", title="Phone Case", price=5.0))
     discovery_proposals = discover_new_products(
-        conn, cj, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
+        conn, suppliers, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
     )
     assert len(discovery_proposals) == 1
     publish_proposal = discovery_proposals[0]
@@ -116,12 +116,12 @@ def test_full_journey_new_product_to_paid_order_to_supplier_order_to_tracking(
 
 
 def test_a_rejected_telegram_decision_never_touches_any_external_mock(
-    conn, settings, shopify, cj, telegram, web_search, executor
+    conn, settings, shopify, cj, suppliers, telegram, web_search, executor
 ):
     cj.catalog.append(CJProduct(product_id="CJ-1", title="Pet Leash", price=4.0))
 
     proposals = discover_new_products(
-        conn, cj, web_search, settings, agents=all_approving_agents(), search_queries=["pet"]
+        conn, suppliers, web_search, settings, agents=all_approving_agents(), search_queries=["pet"]
     )
     proposal = send_for_telegram_approval(conn, proposals[0], telegram)
 

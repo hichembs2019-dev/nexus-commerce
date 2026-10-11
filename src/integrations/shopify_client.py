@@ -62,11 +62,11 @@ class RealShopifyClient(ShopifyClient):
     verification rule, doing exactly what it says: "إن لم تستطع التحقق من
     شيء... لا تستخدمه."
 
-    create_product() is the first exception: its two mutations were verified
+    create_product() and get_recent_orders() are the exceptions: verified
     live on 2026-10-11 via shopify.dev's own "Ask assistant", from the
     owner's own device (shopify.dev is blocked from this project's dev
-    session - see docs/SOURCES.md for the full exchange and source
-    citations). Every other method here is still unverified.
+    session - see docs/SOURCES.md for the full exchange). update_price() and
+    update_tracking() are still unverified.
     """
 
     _UNVERIFIED = (
@@ -103,6 +103,39 @@ class RealShopifyClient(ShopifyClient):
     }
     """
 
+    # Verified 2026-10-11 - see docs/SOURCES.md "Orders list query".
+    _LIST_RECENT_ORDERS = """
+    query ListRecentOrders($first: Int = 10) {
+      orders(first: $first, sortKey: CREATED_AT, reverse: true) {
+        edges {
+          node {
+            id
+            displayFinancialStatus
+            totalPriceSet {
+              shopMoney { amount currencyCode }
+            }
+            lineItems(first: 10) {
+              edges {
+                node {
+                  id
+                  name
+                  quantity
+                  originalUnitPriceSet { shopMoney { amount currencyCode } }
+                }
+              }
+            }
+            shippingAddress {
+              name
+              address1
+              city
+              countryCodeV2
+            }
+          }
+        }
+      }
+    }
+    """
+
     def __init__(self, shop_url: str, access_token: str, api_version: str, currency_code: str = "USD"):
         import shopify
 
@@ -124,7 +157,36 @@ class RealShopifyClient(ShopifyClient):
         return payload["data"]
 
     def get_recent_orders(self) -> list[ShopifyOrder]:
-        raise NotImplementedError(self._UNVERIFIED)
+        orders = self._execute(self._LIST_RECENT_ORDERS, {"first": 10})["orders"]
+        result = []
+        for edge in orders["edges"]:
+            node = edge["node"]
+            line_items = [
+                {
+                    "id": li["node"]["id"],
+                    "name": li["node"]["name"],
+                    "quantity": li["node"]["quantity"],
+                    "price": li["node"]["originalUnitPriceSet"]["shopMoney"]["amount"],
+                }
+                for li in node["lineItems"]["edges"]
+            ]
+            shipping_address = node.get("shippingAddress") or {}
+            result.append(
+                ShopifyOrder(
+                    order_id=node["id"],
+                    # "PAID" -> "paid" - see docs/SOURCES.md "Orders list query".
+                    financial_status=node["displayFinancialStatus"].lower(),
+                    total_price=float(node["totalPriceSet"]["shopMoney"]["amount"]),
+                    line_items=line_items,
+                    shipping_address={
+                        "name": shipping_address.get("name"),
+                        "address1": shipping_address.get("address1"),
+                        "city": shipping_address.get("city"),
+                        "country_code": shipping_address.get("countryCodeV2"),
+                    } if shipping_address else {},
+                )
+            )
+        return result
 
     def create_product(
         self, *, title: str, description: str, price: float, images: list[str], cj_product_id: str = ""

@@ -248,6 +248,96 @@ store's actual currency - `RealShopifyClient` takes it as a configurable
 (`productCreate` → `productVariantsBulkCreate`). Every other
 `RealShopifyClient` method is still unverified - see `UNVERIFIED.md`.
 
+### Order payment status field - verified 2026-10-11
+
+Same source (shopify.dev's own "Ask assistant", owner's device). This answer
+did not include an explicit source citation block like the three above it -
+noted here plainly rather than treated as equally sourced:
+
+```graphql
+query GetOrderPaymentStatus($id: ID!) {
+  order(id: $id) {
+    id
+    displayFinancialStatus
+  }
+}
+```
+
+Confirmed: the field is `displayFinancialStatus` (not `financialStatus`) -
+matches the rename `UNVERIFIED.md` had already flagged as a risk before this
+was checked. A sample response was also provided, confirming the enum value
+is uppercase (`"PAID"`), not `"paid"`:
+
+```json
+{"data": {"order": {"id": "gid://shopify/Order/1234567890", "displayFinancialStatus": "PAID"}}}
+```
+
+### Orders list query - verified 2026-10-11
+
+Same source, with explicit citations this time:
+
+> API: Admin GraphQL > 2026-07 > Queries > orders
+> API: Admin GraphQL > 2026-07 > Objects > OrderConnection and Order fields
+
+```graphql
+query ListRecentOrders($first: Int = 10) {
+  orders(first: $first, sortKey: CREATED_AT, reverse: true) {
+    edges {
+      node {
+        id
+        displayFinancialStatus
+        totalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+          presentmentMoney {
+            amount
+            currencyCode
+          }
+        }
+        lineItems(first: 10) {
+          edges {
+            node {
+              id
+              name
+              quantity
+              originalUnitPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+            }
+          }
+        }
+        shippingAddress {
+          name
+          address1
+          city
+          countryCodeV2
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+  }
+}
+```
+
+`get_recent_orders()` is now implemented against this exact query. Mapping
+decisions (ours, not Shopify's - documented, not guessed from their API):
+- `financial_status` is lowercased on the way in (`"PAID"` → `"paid"`) so it
+  matches the lowercase convention every mock/test in this project already
+  uses (`check_payment_confirmed` compares against `"paid"`).
+- `total_price` reads `totalPriceSet.shopMoney.amount`.
+- `line_items` is a list of `{id, name, quantity, price}` dicts built from
+  `lineItems.edges`.
+- `shipping_address` is `None`-safe (a digital-only order may have no
+  `shippingAddress`) and maps to `{name, address1, city, country_code}`.
+
 ## CJ Dropshipping
 
 `developers.cjdropshipping.com` is blocked. No independently-reachable

@@ -34,26 +34,25 @@ test and every DRY_RUN run actually exercises.
 ## Shopify - the GraphQL query/mutation bodies specifically
 
 The `ShopifyAPI` package's own authentication/session/`GraphQL().execute()`
-usage **was** verified (see `SOURCES.md`) and is used for real. `productCreate`
-+ `productVariantsBulkCreate` (the two mutations behind `create_product()`)
-are now verified too and implemented for real - see `SOURCES.md`
-"productCreate with images" / "productVariantsBulkCreate (price)". What
-remains **not** verified is the GraphQL document text for every other
-operation:
+usage **was** verified (see `SOURCES.md`) and is used for real.
+`create_product()` (`productCreate` + `productVariantsBulkCreate`) and
+`get_recent_orders()` (the `orders` connection + `displayFinancialStatus`)
+are now verified too and implemented for real - see `SOURCES.md`. What
+remains **not** verified is the GraphQL document text for the two writes
+still left:
 
 - `productUpdate` (or the newer `productSet`) for `update_price()` - exact
   field names and required arguments
-- The field name for an order's payment status in the GraphQL schema -
-  Shopify has renamed this across API versions before (`financialStatus` in
-  older versions, `displayFinancialStatus` more recently) and which is
-  correct for whatever API version a real store ends up on was not confirmed
 - Fulfillment/tracking-number update mutation name and fields
-- Collection (product grouping) mutation names and fields
+
+Collection (product grouping) mutations were never implemented at all -
+spec's tool list mentions them but no workflow in this project needs them.
 
 `src/integrations/shopify_client.py`'s `RealShopifyClient` implements session
-setup and `create_product()` exactly as verified; every other method still
-raises `NotImplementedError` pointing here. `MockShopifyClient` is fully
-implemented and is what every test and DRY_RUN run uses regardless.
+setup, `create_product()`, and `get_recent_orders()` exactly as verified;
+`update_price()` and `update_tracking()` still raise `NotImplementedError`
+pointing here. `MockShopifyClient` is fully implemented and is what every
+test and DRY_RUN run uses regardless.
 
 ## Telegram - proactive `send_message` outside a handler
 

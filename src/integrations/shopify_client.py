@@ -62,11 +62,11 @@ class RealShopifyClient(ShopifyClient):
     verification rule, doing exactly what it says: "إن لم تستطع التحقق من
     شيء... لا تستخدمه."
 
-    create_product() and get_recent_orders() are the exceptions: verified
-    live on 2026-10-11 via shopify.dev's own "Ask assistant", from the
-    owner's own device (shopify.dev is blocked from this project's dev
-    session - see docs/SOURCES.md for the full exchange). update_price() and
-    update_tracking() are still unverified.
+    create_product(), get_recent_orders(), and update_price() are the
+    exceptions: verified live on 2026-10-11 via shopify.dev's own "Ask
+    assistant", from the owner's own device (shopify.dev is blocked from
+    this project's dev session - see docs/SOURCES.md for the full
+    exchange). update_tracking() is still unverified.
     """
 
     _UNVERIFIED = (
@@ -132,6 +132,31 @@ class RealShopifyClient(ShopifyClient):
             }
           }
         }
+      }
+    }
+    """
+
+    # Verified 2026-10-11 - see docs/SOURCES.md "Variant price update".
+    _GET_PRODUCT_FIRST_VARIANT = """
+    query GetProductFirstVariant($id: ID!) {
+      product(id: $id) {
+        id
+        variants(first: 1) {
+          nodes { id }
+        }
+      }
+    }
+    """
+
+    _UPDATE_VARIANT_PRICE = """
+    mutation UpdateVariantPrice($productId: ID!, $variantId: ID!, $newPrice: Money!) {
+      productVariantsBulkUpdate(
+        productId: $productId
+        variants: [{ id: $variantId, price: $newPrice }]
+      ) {
+        product { id }
+        productVariants { id price }
+        userErrors { field message }
       }
     }
     """
@@ -220,7 +245,19 @@ class RealShopifyClient(ShopifyClient):
         raise NotImplementedError(self._UNVERIFIED)
 
     def update_price(self, product_id: str, new_price: float) -> None:
-        raise NotImplementedError(self._UNVERIFIED)
+        product = self._execute(self._GET_PRODUCT_FIRST_VARIANT, {"id": product_id})["product"]
+        if product is None or not product["variants"]["nodes"]:
+            raise RuntimeError(f"no variant found for product {product_id}")
+        variant_id = product["variants"]["nodes"][0]["id"]
+
+        # $newPrice as a string, not a bare number - see docs/SOURCES.md
+        # "Variant price update" for why this detail isn't fully confirmed.
+        result = self._execute(
+            self._UPDATE_VARIANT_PRICE,
+            {"productId": product_id, "variantId": variant_id, "newPrice": str(new_price)},
+        )["productVariantsBulkUpdate"]
+        if result["userErrors"]:
+            raise RuntimeError(f"productVariantsBulkUpdate failed: {result['userErrors']}")
 
     def update_tracking(self, order_id: str, tracking_number: str, carrier: str) -> None:
         raise NotImplementedError(self._UNVERIFIED)

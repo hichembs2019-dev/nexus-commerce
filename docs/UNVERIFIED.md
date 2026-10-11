@@ -36,21 +36,28 @@ test and every DRY_RUN run actually exercises.
 The `ShopifyAPI` package's own authentication/session/`GraphQL().execute()`
 usage **was** verified (see `SOURCES.md`) and is used for real.
 `create_product()` (`productCreate` + `productVariantsBulkCreate`) and
-`get_recent_orders()` (the `orders` connection + `displayFinancialStatus`)
-are now verified too and implemented for real - see `SOURCES.md`. What
-remains **not** verified is the GraphQL document text for the two writes
-still left:
+`get_recent_orders()` (the `orders` connection + `displayFinancialStatus`),
+and `update_price()` (`productVariantsBulkUpdate`, after looking up the
+variant id) are now verified too and implemented for real - see
+`SOURCES.md`. What remains **not** verified is the GraphQL document text for
+the one write still left:
 
-- `productUpdate` (or the newer `productSet`) for `update_price()` - exact
-  field names and required arguments
 - Fulfillment/tracking-number update mutation name and fields
+  (`update_tracking()`)
+
+`update_price()` has one residual, explicitly-flagged gap - see
+`SOURCES.md` "Variant price update": whether Shopify's `Money` scalar wants
+a JSON string or a bare number was not independently re-confirmed (the
+example used a bare number; every other Money field verified this session
+was a string, and the code follows that pattern for consistency, not
+certainty).
 
 Collection (product grouping) mutations were never implemented at all -
 spec's tool list mentions them but no workflow in this project needs them.
 
 `src/integrations/shopify_client.py`'s `RealShopifyClient` implements session
-setup, `create_product()`, and `get_recent_orders()` exactly as verified;
-`update_price()` and `update_tracking()` still raise `NotImplementedError`
+setup, `create_product()`, `get_recent_orders()`, and `update_price()`
+exactly as verified; `update_tracking()` still raises `NotImplementedError`
 pointing here. `MockShopifyClient` is fully implemented and is what every
 test and DRY_RUN run uses regardless.
 

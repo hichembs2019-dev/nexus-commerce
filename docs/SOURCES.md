@@ -327,6 +327,50 @@ query ListRecentOrders($first: Int = 10) {
 }
 ```
 
+### Variant price update - verified 2026-10-11
+
+Same source, two answers, neither included an explicit "Sources" citation
+block (noted plainly, same as the other un-cited answers above):
+
+```graphql
+mutation UpdateVariantPrice($productId: ID!, $variantId: ID!, $newPrice: Money!) {
+  productVariantsBulkUpdate(
+    productId: $productId
+    variants: [{ id: $variantId, price: $newPrice }]
+  ) {
+    product { id title }
+    productVariants { id title price }
+    userErrors { field message }
+  }
+}
+```
+
+```graphql
+query GetProductFirstVariant($id: ID!) {
+  product(id: $id) {
+    id
+    title
+    variants(first: 1) {
+      nodes { id title }
+    }
+  }
+}
+```
+
+Gap found while implementing this, not from Shopify: `update_price()`'s own
+interface only takes `product_id`, not `variant_id` - Shopify's mutation
+needs both. `RealShopifyClient.update_price()` now looks the variant id up
+via the query above before calling the mutation.
+
+One detail is genuinely unresolved, not guessed past: the example variables
+for `$newPrice: Money!` showed a bare JSON number (`19.99`), but every other
+Money-shaped field verified this session (`totalPriceSet.shopMoney.amount`,
+`productVariantsBulkCreate`'s `price.amount`) was a **string**. The code
+sends it as a string (`str(new_price)`) for consistency with those, since
+GraphQL string scalars are normally not interchangeable with bare numbers
+this is the more defensible choice, but it was not independently re-confirmed
+the way the other fields were - worth re-checking before relying on it live.
+
 `get_recent_orders()` is now implemented against this exact query. Mapping
 decisions (ours, not Shopify's - documented, not guessed from their API):
 - `financial_status` is lowercased on the way in (`"PAID"` → `"paid"`) so it

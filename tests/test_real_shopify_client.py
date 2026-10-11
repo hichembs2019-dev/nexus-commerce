@@ -150,3 +150,48 @@ def test_get_recent_orders_maps_the_real_response_shape_including_lowercasing_fi
     # order 2 has no shippingAddress - must not crash, must come back empty
     assert orders[1].financial_status == "pending"
     assert orders[1].shipping_address == {}
+
+
+def test_update_price_looks_up_the_first_variant_then_updates_its_price():
+    client, fake = _client(
+        [
+            {"data": {"product": {"id": "gid://shopify/Product/1", "variants": {"nodes": [{"id": "gid://shopify/ProductVariant/9"}]}}}},
+            {"data": {"productVariantsBulkUpdate": {"product": {"id": "gid://shopify/Product/1"}, "productVariants": [{"id": "gid://shopify/ProductVariant/9", "price": "24.99"}], "userErrors": []}}},
+        ]
+    )
+
+    client.update_price("gid://shopify/Product/1", 24.99)
+
+    assert len(fake.calls) == 2
+    lookup_query, lookup_vars = fake.calls[0]
+    assert "GetProductFirstVariant" in lookup_query
+    assert lookup_vars == {"id": "gid://shopify/Product/1"}
+
+    update_query, update_vars = fake.calls[1]
+    assert "productVariantsBulkUpdate" in update_query
+    assert update_vars == {
+        "productId": "gid://shopify/Product/1",
+        "variantId": "gid://shopify/ProductVariant/9",
+        "newPrice": "24.99",
+    }
+
+
+def test_update_price_raises_clearly_when_the_product_has_no_variant():
+    client, fake = _client([{"data": {"product": {"id": "gid://shopify/Product/1", "variants": {"nodes": []}}}}])
+
+    with pytest.raises(RuntimeError, match="no variant found"):
+        client.update_price("gid://shopify/Product/1", 10.0)
+
+    assert len(fake.calls) == 1  # never attempted the update without a variant id
+
+
+def test_update_price_raises_on_productVariantsBulkUpdate_userErrors():
+    client, fake = _client(
+        [
+            {"data": {"product": {"id": "gid://shopify/Product/1", "variants": {"nodes": [{"id": "gid://shopify/ProductVariant/9"}]}}}},
+            {"data": {"productVariantsBulkUpdate": {"product": None, "productVariants": [], "userErrors": [{"field": ["price"], "message": "invalid"}]}}},
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="productVariantsBulkUpdate failed"):
+        client.update_price("gid://shopify/Product/1", -5.0)

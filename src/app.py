@@ -46,7 +46,10 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
 
     if not force_mocks and settings.shopify_configured:
         shopify: ShopifyClient = RealShopifyClient(
-            settings.shopify_shop_url, settings.shopify_access_token, settings.shopify_api_version
+            settings.shopify_shop_url,
+            settings.shopify_access_token,
+            settings.shopify_api_version,
+            settings.shopify_currency_code,
         )
     else:
         if not force_mocks:

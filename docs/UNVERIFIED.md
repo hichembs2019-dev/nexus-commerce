@@ -34,12 +34,15 @@ test and every DRY_RUN run actually exercises.
 ## Shopify - the GraphQL query/mutation bodies specifically
 
 The `ShopifyAPI` package's own authentication/session/`GraphQL().execute()`
-usage **was** verified (see `SOURCES.md`) and is used for real. What was
-**not** verified is the actual GraphQL document text for any specific
-operation, because `shopify.dev`'s GraphQL reference was blocked:
+usage **was** verified (see `SOURCES.md`) and is used for real. `productCreate`
++ `productVariantsBulkCreate` (the two mutations behind `create_product()`)
+are now verified too and implemented for real - see `SOURCES.md`
+"productCreate with images" / "productVariantsBulkCreate (price)". What
+remains **not** verified is the GraphQL document text for every other
+operation:
 
-- `productCreate` / `productUpdate` mutation - exact field names, required
-  arguments, whether `productCreate` or the newer `productSet` is current
+- `productUpdate` (or the newer `productSet`) for `update_price()` - exact
+  field names and required arguments
 - The field name for an order's payment status in the GraphQL schema -
   Shopify has renamed this across API versions before (`financialStatus` in
   older versions, `displayFinancialStatus` more recently) and which is
@@ -48,9 +51,9 @@ operation, because `shopify.dev`'s GraphQL reference was blocked:
 - Collection (product grouping) mutation names and fields
 
 `src/integrations/shopify_client.py`'s `RealShopifyClient` implements session
-setup exactly as verified, but every method that would need one of the above
-GraphQL documents raises `NotImplementedError` pointing here. `MockShopifyClient`
-is fully implemented.
+setup and `create_product()` exactly as verified; every other method still
+raises `NotImplementedError` pointing here. `MockShopifyClient` is fully
+implemented and is what every test and DRY_RUN run uses regardless.
 
 ## Telegram - proactive `send_message` outside a handler
 

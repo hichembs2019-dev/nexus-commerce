@@ -118,6 +118,136 @@ at exactly those call sites with a comment pointing here, rather than
 guessing field names that Shopify is known to rename across API versions
 (e.g. `financialStatus` → `displayFinancialStatus` in past version bumps).
 
+### productCreate - verified 2026-10-11
+
+`shopify.dev` is blocked from this session (see note above), but the owner
+fetched it themselves from their own device, using shopify.dev's own "Ask
+assistant" tool, and pasted the answer here verbatim, source citation
+included:
+
+> API: Admin GraphQL > 2026-07 > Mutations > ProductCreate
+> https://shopify.dev/docs/api/admin-graphql/2026-07/mutations/productCreate
+
+```graphql
+mutation CreateProduct($title: String!, $descriptionHtml: String) {
+  productCreate(
+    product: { title: $title, descriptionHtml: $descriptionHtml }
+  ) {
+    product {
+      id
+      title
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+```
+
+Confirmed real and current (API version 2026-07).
+
+### productCreate with images - verified 2026-10-11
+
+Same source (shopify.dev's own "Ask assistant", owner's device), follow-up
+answer, source citations included:
+
+> API: Admin GraphQL > 2026-07 > Mutations > ProductCreate
+> API: Admin GraphQL > 2026-07 > Input Objects > CreateMediaInput
+
+```graphql
+mutation ProductCreateWithImages($title: String!, $descriptionHtml: String) {
+  productCreate(
+    product: { title: $title, descriptionHtml: $descriptionHtml }
+    media: [
+      {
+        originalSource: "https://example.com/product-image-1.jpg"
+        mediaContentType: IMAGE
+        alt: "Main product image"
+      }
+    ]
+  ) {
+    product {
+      id
+      title
+      media(first: 3) {
+        nodes {
+          id
+          mediaContentType
+          preview {
+            image {
+              url
+            }
+          }
+        }
+      }
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+```
+
+Confirmed: `productCreate` does **not** accept price directly - price lives on
+variants, set afterward via `productVariantsBulkCreate` (or `productSet`).
+`media` is a top-level argument of `productCreate`, not a product field.
+
+### productVariantsBulkCreate (price) - verified 2026-10-11
+
+Same source, final follow-up, source citations included:
+
+> API: Admin GraphQL > 2026-07 > Mutations > ProductVariantsBulkCreate
+> https://shopify.dev/docs/api/admin-graphql/2026-07/mutations/productVariantsBulkCreate
+> API: Admin GraphQL > 2026-07 > Input Objects > ProductVariantsBulkInput
+> https://shopify.dev/docs/api/admin-graphql/2026-07/input-objects/ProductVariantsBulkInput
+
+```graphql
+mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+  productVariantsBulkCreate(productId: $productId, variants: $variants) {
+    userErrors {
+      field
+      message
+    }
+    product {
+      id
+      options {
+        id
+        name
+        values
+        position
+        optionValues {
+          id
+          name
+          hasVariants
+        }
+      }
+    }
+    productVariants {
+      id
+      title
+      selectedOptions {
+        name
+        value
+      }
+    }
+  }
+}
+```
+
+Confirmed: price is passed as `variants[n].price`, a `Money` value shaped
+`{"amount": "19.99", "currencyCode": "USD"}`. The `"USD"` in that example is
+Shopify's own illustrative value, not a confirmed fact about any specific
+store's actual currency - `RealShopifyClient` takes it as a configurable
+`SHOPIFY_CURRENCY_CODE` (default `"USD"`), a simple documented default like
+`MARKUP_MULTIPLIER` elsewhere in this project, not a verified fact.
+
+**`create_product()` is now fully implemented** in
+`src/integrations/shopify_client.py` using these two mutations in sequence
+(`productCreate` → `productVariantsBulkCreate`). Every other
+`RealShopifyClient` method is still unverified - see `UNVERIFIED.md`.
+
 ## CJ Dropshipping
 
 `developers.cjdropshipping.com` is blocked. No independently-reachable

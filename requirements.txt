@@ -4,6 +4,10 @@
 
 anthropic>=0.40.0
 python-telegram-bot>=21.0
+# Was already present transitively (via python-telegram-bot); pinned
+# directly now that RealCJClient's token exchange calls it itself - see
+# docs/SOURCES.md "CJ Dropshipping > Authentication".
+httpx>=0.27.0
 # Deprecated upstream (see docs/SOURCES.md) - used anyway because its real
 # usage was verified and shopify.dev was unreachable to verify the suggested
 # replacement ("shopifyapp"). Revisit once that can be checked.

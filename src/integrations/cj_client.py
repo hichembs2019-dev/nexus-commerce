@@ -1,8 +1,10 @@
-"""CJ Dropshipping - the entire API surface is unverified this session
-(docs/UNVERIFIED.md: developers.cjdropshipping.com was blocked, no
-independently-reachable alternative found). Method names below are this
-project's own domain vocabulary, never CJ's own API vocabulary, which was
-never seen.
+"""CJ Dropshipping - most of the API surface is still unverified (see
+docs/UNVERIFIED.md). Method names below are this project's own domain
+vocabulary, not CJ's own API vocabulary. Authentication is now verified and
+real - see docs/SOURCES.md "CJ Dropshipping > Authentication", read by the
+owner directly from developers.cjdropshipping.com (blocked from this
+project's own dev session, reachable from the owner's device) on
+2026-10-11.
 """
 from __future__ import annotations
 
@@ -46,9 +48,10 @@ class CJClient(ABC):
 
 
 class RealCJClient(CJClient):
-    """Every method raises - see docs/UNVERIFIED.md. Nothing about CJ's
-    actual API (base URL, auth scheme, endpoint paths, field names) was
-    confirmed against any reachable source this session, so nothing is
+    """Authentication (__init__ / _access_token) is real and verified - see
+    the module docstring. Every data method still raises - see
+    docs/UNVERIFIED.md. Nothing about CJ's product/order/tracking endpoints
+    was confirmed against any reachable source this session, so nothing is
     guessed here.
     """
 
@@ -56,7 +59,27 @@ class RealCJClient(CJClient):
 
     def __init__(self, api_key: str, base_url: str):
         self._api_key = api_key
-        self._base_url = base_url
+        self._base_url = base_url.rstrip("/")
+        self._access_token: str | None = None
+
+    def _get_access_token(self) -> str:
+        # Verified 2026-10-11 - see docs/SOURCES.md "CJ Dropshipping >
+        # Authentication". CJ caches the token server-side for 24h per
+        # account, so re-fetching per client instance is cheap, not wasteful.
+        if self._access_token is None:
+            import httpx
+
+            response = httpx.post(
+                f"{self._base_url}/authentication/getAccessToken",
+                json={"apiKey": self._api_key},
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+            )
+            payload = response.json()
+            if not payload.get("result"):
+                raise RuntimeError(f"CJ authentication failed: {payload.get('message')}")
+            self._access_token = payload["data"]["accessToken"]
+        return self._access_token
 
     def search_products(self, query: str) -> list[CJProduct]:
         raise NotImplementedError(self._UNVERIFIED)

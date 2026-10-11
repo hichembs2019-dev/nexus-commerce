@@ -39,9 +39,10 @@ class Settings:
     # verified fact about any specific store.
     shopify_currency_code: str = "USD"
 
-    # CJ Dropshipping
+    # CJ Dropshipping - base URL verified 2026-10-11, see docs/SOURCES.md
+    # "CJ Dropshipping > Authentication".
     cj_api_key: str = ""
-    cj_api_base_url: str = ""
+    cj_api_base_url: str = "https://developers.cjdropshipping.com/api2.0/v1"
 
     # Telegram
     telegram_bot_token: str = ""
@@ -96,7 +97,7 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         shopify_api_version=os.environ.get("SHOPIFY_API_VERSION", "2024-07"),
         shopify_currency_code=os.environ.get("SHOPIFY_CURRENCY_CODE", "USD"),
         cj_api_key=os.environ.get("CJ_API_KEY", ""),
-        cj_api_base_url=os.environ.get("CJ_API_BASE_URL", ""),
+        cj_api_base_url=os.environ.get("CJ_API_BASE_URL", "https://developers.cjdropshipping.com/api2.0/v1"),
         telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
         max_order_cost=_float(os.environ.get("MAX_ORDER_COST"), 200.0),

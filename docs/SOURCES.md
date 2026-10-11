@@ -440,8 +440,59 @@ decisions (ours, not Shopify's - documented, not guessed from their API):
 
 ## CJ Dropshipping
 
-`developers.cjdropshipping.com` is blocked. No independently-reachable
-alternative source was found (no official or verifiably-official Python
-package on PyPI, no mirrored docs located). **Nothing about CJ's actual API
-shape is used anywhere in this codebase.** The entire CJ client is an
-interface plus a mock; see `UNVERIFIED.md`.
+`developers.cjdropshipping.com` is blocked from this project's own dev
+session (see note above), but on 2026-10-11 the owner opened it directly
+from their own device and it loaded - CJ's full official docs site, not an
+AI assistant like Shopify's but static reference pages, read and relayed
+here page by page.
+
+### Authentication - verified 2026-10-11
+
+From CJ's own docs, "1 Authentication > 1.1 Get access token (POST)":
+
+> https://developers.cjdropshipping.com/en/api/introduction.html (CJ Docs home)
+
+```
+POST https://developers.cjdropshipping.com/api2.0/v1/authentication/getAccessToken
+Content-Type: application/json
+
+{"apiKey": "<the CJ API Key from the dashboard>"}
+```
+
+Response:
+```json
+{
+  "code": 200,
+  "result": true,
+  "message": "Success",
+  "data": {
+    "openId": 123456789,
+    "accessToken": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "accessTokenExpiryDate": "2021-08-18T09:16:33+08:00",
+    "refreshToken": "f7edabe65c3b4a198b50ca8f969e36eb",
+    "refreshTokenExpiryDate": "2022-02-07T09:16:33+08:00",
+    "createDate": "2021-08-11T09:16:33+08:00"
+  },
+  "requestId": "...",
+  "success": true
+}
+```
+
+Confirmed two-step credential model, not one flat API key:
+1. **CJ API Key** (`CJ_API_KEY` in `.env`): a long-lived credential obtained
+   manually once from the CJ dashboard (Apps → install "API" app → API →
+   Add API → Type: API Key → copy the generated key).
+2. **Access token**: obtained by POSTing that API Key to the endpoint above.
+   Valid 180 days; CJ caches it server-side for 24h per account, so calling
+   this on every app startup is cheap, not wasteful. Used as the
+   `CJ-Access-Token` header value on every other authenticated endpoint
+   (confirmed consistently across every other CJ docs page read this
+   session: `--header 'CJ-Access-Token: xxxxxxxxxxx'`).
+
+Rate limit noted on the same page: 1 call/second (QPS=1) for this endpoint,
+same as other CJ endpoints.
+
+Every other CJ endpoint (search_products, get_shipping_cost, get_product,
+create_order, track_shipment) is still unverified - see UNVERIFIED.md.
+`RealCJClient` now implements real session/token setup but every data
+method still raises `NotImplementedError`.

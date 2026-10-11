@@ -62,11 +62,11 @@ class RealShopifyClient(ShopifyClient):
     verification rule, doing exactly what it says: "إن لم تستطع التحقق من
     شيء... لا تستخدمه."
 
-    create_product(), get_recent_orders(), and update_price() are the
-    exceptions: verified live on 2026-10-11 via shopify.dev's own "Ask
-    assistant", from the owner's own device (shopify.dev is blocked from
-    this project's dev session - see docs/SOURCES.md for the full
-    exchange). update_tracking() is still unverified.
+    Every method is now verified and implemented - live, on 2026-10-11, via
+    shopify.dev's own "Ask assistant", from the owner's own device
+    (shopify.dev is blocked from this project's dev session - see
+    docs/SOURCES.md for the full exchange, with source citations where the
+    tool gave them).
     """
 
     _UNVERIFIED = (
@@ -156,6 +156,33 @@ class RealShopifyClient(ShopifyClient):
       ) {
         product { id }
         productVariants { id price }
+        userErrors { field message }
+      }
+    }
+    """
+
+    # Verified 2026-10-11 - see docs/SOURCES.md "Fulfillment tracking update".
+    _GET_ORDER_FULFILLMENT_IDS = """
+    query OrderFulfillmentIds($id: ID!) {
+      order(id: $id) {
+        id
+        fulfillments(first: 10) { id }
+      }
+    }
+    """
+
+    _UPDATE_FULFILLMENT_TRACKING = """
+    mutation FulfillmentTrackingInfoUpdate(
+      $fulfillmentId: ID!
+      $trackingInfoInput: FulfillmentTrackingInput!
+      $notifyCustomer: Boolean
+    ) {
+      fulfillmentTrackingInfoUpdate(
+        fulfillmentId: $fulfillmentId
+        trackingInfoInput: $trackingInfoInput
+        notifyCustomer: $notifyCustomer
+      ) {
+        fulfillment { id }
         userErrors { field message }
       }
     }
@@ -260,7 +287,23 @@ class RealShopifyClient(ShopifyClient):
             raise RuntimeError(f"productVariantsBulkUpdate failed: {result['userErrors']}")
 
     def update_tracking(self, order_id: str, tracking_number: str, carrier: str) -> None:
-        raise NotImplementedError(self._UNVERIFIED)
+        order = self._execute(self._GET_ORDER_FULFILLMENT_IDS, {"id": order_id})["order"]
+        if order is None or not order["fulfillments"]:
+            raise RuntimeError(f"no fulfillment found for order {order_id}")
+        fulfillment_id = order["fulfillments"][0]["id"]
+
+        # notifyCustomer=True is this project's own choice, not Shopify's -
+        # see docs/SOURCES.md "Fulfillment tracking update".
+        result = self._execute(
+            self._UPDATE_FULFILLMENT_TRACKING,
+            {
+                "fulfillmentId": fulfillment_id,
+                "trackingInfoInput": {"company": carrier, "number": tracking_number},
+                "notifyCustomer": True,
+            },
+        )["fulfillmentTrackingInfoUpdate"]
+        if result["userErrors"]:
+            raise RuntimeError(f"fulfillmentTrackingInfoUpdate failed: {result['userErrors']}")
 
 
 class MockShopifyClient(ShopifyClient):

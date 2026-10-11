@@ -195,3 +195,48 @@ def test_update_price_raises_on_productVariantsBulkUpdate_userErrors():
 
     with pytest.raises(RuntimeError, match="productVariantsBulkUpdate failed"):
         client.update_price("gid://shopify/Product/1", -5.0)
+
+
+def test_update_tracking_looks_up_the_first_fulfillment_then_updates_its_tracking_info():
+    client, fake = _client(
+        [
+            {"data": {"order": {"id": "gid://shopify/Order/1", "fulfillments": [{"id": "gid://shopify/Fulfillment/5"}]}}},
+            {"data": {"fulfillmentTrackingInfoUpdate": {"fulfillment": {"id": "gid://shopify/Fulfillment/5"}, "userErrors": []}}},
+        ]
+    )
+
+    client.update_tracking("gid://shopify/Order/1", "1Z001985YW99744790", "UPS")
+
+    assert len(fake.calls) == 2
+    lookup_query, lookup_vars = fake.calls[0]
+    assert "OrderFulfillmentIds" in lookup_query
+    assert lookup_vars == {"id": "gid://shopify/Order/1"}
+
+    update_query, update_vars = fake.calls[1]
+    assert "fulfillmentTrackingInfoUpdate" in update_query
+    assert update_vars == {
+        "fulfillmentId": "gid://shopify/Fulfillment/5",
+        "trackingInfoInput": {"company": "UPS", "number": "1Z001985YW99744790"},
+        "notifyCustomer": True,
+    }
+
+
+def test_update_tracking_raises_clearly_when_the_order_has_no_fulfillment():
+    client, fake = _client([{"data": {"order": {"id": "gid://shopify/Order/1", "fulfillments": []}}}])
+
+    with pytest.raises(RuntimeError, match="no fulfillment found"):
+        client.update_tracking("gid://shopify/Order/1", "TRACK1", "DHL")
+
+    assert len(fake.calls) == 1
+
+
+def test_update_tracking_raises_on_fulfillmentTrackingInfoUpdate_userErrors():
+    client, fake = _client(
+        [
+            {"data": {"order": {"id": "gid://shopify/Order/1", "fulfillments": [{"id": "gid://shopify/Fulfillment/5"}]}}},
+            {"data": {"fulfillmentTrackingInfoUpdate": {"fulfillment": None, "userErrors": [{"field": ["trackingInfoInput"], "message": "invalid"}]}}},
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="fulfillmentTrackingInfoUpdate failed"):
+        client.update_tracking("gid://shopify/Order/1", "TRACK1", "DHL")

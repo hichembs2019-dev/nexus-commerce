@@ -371,6 +371,62 @@ GraphQL string scalars are normally not interchangeable with bare numbers
 this is the more defensible choice, but it was not independently re-confirmed
 the way the other fields were - worth re-checking before relying on it live.
 
+### Fulfillment tracking update - verified 2026-10-11
+
+Same source, three answers:
+
+```graphql
+mutation FulfillmentTrackingInfoUpdate(
+  $fulfillmentId: ID!
+  $trackingInfoInput: FulfillmentTrackingInput!
+  $notifyCustomer: Boolean
+) {
+  fulfillmentTrackingInfoUpdate(
+    fulfillmentId: $fulfillmentId
+    trackingInfoInput: $trackingInfoInput
+    notifyCustomer: $notifyCustomer
+  ) {
+    fulfillment {
+      id
+      status
+      trackingInfo(first: 10) {
+        company
+        number
+        url
+      }
+    }
+    userErrors { field message }
+  }
+}
+```
+
+`FulfillmentTrackingInput` shape confirmed from example variables:
+`{"company": "UPS", "number": "1Z001985YW99744790"}` - fields are `company`
+and `number`, matching the output `trackingInfo { company, number, url }`.
+
+Same architectural gap as `update_price()`: `update_tracking()`'s interface
+only takes `order_id`, but the mutation needs a `fulfillmentId`:
+
+```graphql
+query OrderFulfillmentIds($id: ID!) {
+  order(id: $id) {
+    id
+    fulfillments(first: 10) { id }
+  }
+}
+```
+
+`RealShopifyClient.update_tracking()` now looks up the order's first
+fulfillment id before calling the mutation, mirroring `update_price()`'s
+variant lookup. `notifyCustomer: true` is this project's own default (not
+from Shopify) - a tracking update with no customer notification defeats the
+point of adding one.
+
+**Every `RealShopifyClient` method is now implemented and verified.** No
+`NotImplementedError` remains in `src/integrations/shopify_client.py`.
+Collection (product grouping) mutations were never implemented - spec's
+tool list mentions them but no workflow in this project needs them.
+
 `get_recent_orders()` is now implemented against this exact query. Mapping
 decisions (ours, not Shopify's - documented, not guessed from their API):
 - `financial_status` is lowercased on the way in (`"PAID"` → `"paid"`) so it

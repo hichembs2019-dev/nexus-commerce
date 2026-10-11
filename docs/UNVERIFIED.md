@@ -31,35 +31,39 @@ raises `NotImplementedError("CJ Dropshipping API not verified - see
 docs/UNVERIFIED.md")`. `MockCJClient` is fully implemented and is what every
 test and every DRY_RUN run actually exercises.
 
-## Shopify - the GraphQL query/mutation bodies specifically
+## Shopify - now fully verified and implemented
 
 The `ShopifyAPI` package's own authentication/session/`GraphQL().execute()`
 usage **was** verified (see `SOURCES.md`) and is used for real.
-`create_product()` (`productCreate` + `productVariantsBulkCreate`) and
+**Every `RealShopifyClient` method is now verified and implemented** -
+`create_product()` (`productCreate` + `productVariantsBulkCreate`),
 `get_recent_orders()` (the `orders` connection + `displayFinancialStatus`),
-and `update_price()` (`productVariantsBulkUpdate`, after looking up the
-variant id) are now verified too and implemented for real - see
-`SOURCES.md`. What remains **not** verified is the GraphQL document text for
-the one write still left:
+`update_price()` (`productVariantsBulkUpdate`, after looking up the variant
+id), and `update_tracking()` (`fulfillmentTrackingInfoUpdate`, after looking
+up the fulfillment id). See `SOURCES.md` for the full exchange and every
+source citation.
 
-- Fulfillment/tracking-number update mutation name and fields
-  (`update_tracking()`)
+Two residual, explicitly-flagged gaps remain (neither is a guess - both are
+documented project-level choices):
 
-`update_price()` has one residual, explicitly-flagged gap - see
-`SOURCES.md` "Variant price update": whether Shopify's `Money` scalar wants
-a JSON string or a bare number was not independently re-confirmed (the
-example used a bare number; every other Money field verified this session
-was a string, and the code follows that pattern for consistency, not
-certainty).
+- `update_price()`: whether Shopify's `Money` scalar wants a JSON string or
+  a bare number for `$newPrice` was not independently re-confirmed (the
+  example used a bare number; every other Money field verified this session
+  was a string, and the code follows that pattern for consistency, not
+  certainty). See `SOURCES.md` "Variant price update".
+- `update_tracking()`: `notifyCustomer: true` is this project's own default,
+  not something Shopify's docs specified - a tracking update with no
+  customer notification defeats the point of adding one. See `SOURCES.md`
+  "Fulfillment tracking update".
 
 Collection (product grouping) mutations were never implemented at all -
 spec's tool list mentions them but no workflow in this project needs them.
 
-`src/integrations/shopify_client.py`'s `RealShopifyClient` implements session
-setup, `create_product()`, `get_recent_orders()`, and `update_price()`
-exactly as verified; `update_tracking()` still raises `NotImplementedError`
-pointing here. `MockShopifyClient` is fully implemented and is what every
-test and DRY_RUN run uses regardless.
+`src/integrations/shopify_client.py`'s `RealShopifyClient` now has **zero**
+remaining `NotImplementedError`. `MockShopifyClient` stays fully implemented
+too and is what every automated test and every DRY_RUN run actually
+exercises regardless - `RealShopifyClient` only runs when `DRY_RUN=false`
+and real Shopify credentials are set.
 
 ## Telegram - proactive `send_message` outside a handler
 

@@ -152,7 +152,46 @@ class RealCJClient(CJClient):
         return CJProduct(product_id=data["pid"], title=data["productNameEn"], price=float(data["sellPrice"]))
 
     def create_order(self, *, product_id: str, quantity: int, shipping_address: dict) -> str:
-        raise NotImplementedError(self._UNVERIFIED)
+        # Verified 2026-10-12 - see docs/SOURCES.md "CJ Dropshipping >
+        # Create order" for the three gaps flagged here: product_id passed
+        # as "vid" (unconfirmed), shippingProvince has no real source in
+        # this project's Shopify order data, and orderNumber is generated
+        # locally since this method's signature carries no order reference.
+        import uuid
+
+        import httpx
+
+        order_number = shipping_address.get("order_number") or str(uuid.uuid4())
+        payload = {
+            "orderNumber": order_number,
+            "shippingCountryCode": shipping_address.get("country_code", ""),
+            "shippingCountry": shipping_address.get("country_code", ""),
+            "shippingProvince": shipping_address.get("province", ""),
+            "shippingCity": shipping_address.get("city", ""),
+            "shippingCustomerName": shipping_address.get("name", ""),
+            "shippingAddress": shipping_address.get("address1", ""),
+            "shippingZip": shipping_address.get("zip", ""),
+            "shippingPhone": shipping_address.get("phone", ""),
+            "fromCountryCode": "CN",
+            "platform": "shopify",
+            "products": [{"vid": product_id, "quantity": quantity}],
+        }
+
+        response = httpx.post(
+            f"{self._base_url}/shopping/order/createOrderV3",
+            json=payload,
+            headers={"CJ-Access-Token": self._get_access_token(), "Content-Type": "application/json"},
+            timeout=30,
+        )
+        result = response.json()
+        if not result.get("result"):
+            raise RuntimeError(f"CJ order creation failed: {result.get('message')}")
+
+        data = result["data"]
+        if data.get("interceptOrderReasons"):
+            raise RuntimeError(f"CJ order creation intercepted: {data['interceptOrderReasons']}")
+
+        return data["orderId"]
 
     def track_shipment(self, cj_order_id: str) -> TrackingInfo:
         raise NotImplementedError(self._UNVERIFIED)

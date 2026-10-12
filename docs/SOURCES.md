@@ -641,5 +641,75 @@ worth re-checking against a real product once a real CJ account is paying
 for calls, not treated as equivalent to the parts of this integration that
 were independently confirmed field-by-field.
 
-Every other CJ endpoint (`create_order`, `track_shipment`) is still
-unverified - see UNVERIFIED.md.
+### Create order (create_order) - verified 2026-10-12
+
+From CJ's own docs, "5 Shopping > 1 Order > 1.2 Create Order V3 (POST)" -
+chosen over "1.1 Create Order V2" since V3 is the page actively documented
+with current guidance (V2 was not opened/compared directly, but V3's own
+page actively warns its *own* `cjPayUrl` field is deprecated, which is the
+kind of explicit currency signal this project looks for before trusting an
+endpoint - see `UNVERIFIED.md` for what this does and doesn't establish
+about V2).
+
+```
+POST https://developers.cjdropshipping.com/api2.0/v1/shopping/order/createOrderV3
+CJ-Access-Token: <access token>
+Content-Type: application/json
+```
+
+Confirmed-required fields (`Y` in CJ's own table): `orderNumber` ("a unique
+identifier for the order from CJ partner" - i.e. from *this* integration,
+not from CJ), `shippingCountryCode`, `shippingCountry`, `shippingProvince`,
+`shippingCity`, `shippingCustomerName`, `shippingAddress`, and `products`
+(array of `{vid, quantity}`, `storeLineItemId` also shown in the example).
+Optional: `shippingZip`, `shippingPhone`, and several more not used here.
+
+Response (`data`, trimmed):
+```json
+{
+  "code": 200, "result": true, "message": "Success",
+  "data": {
+    "orderId": "123434",
+    "orderNumber": "",
+    "orderStatus": "",
+    "interceptOrderReasons": [{"code": 1001, "message": ""}]
+  },
+  "requestId": "9eddf3f5-bd3d-4fae-a4f2-028cb90db97"
+}
+```
+
+`data.orderId` is what `create_order()` returns as CJ's order id.
+`interceptOrderReasons` (non-empty when CJ blocks the order, e.g. for
+stock/compliance reasons even on a `result: true` response) is checked and
+raised on.
+
+**Three gaps found while implementing this, flagged rather than guessed
+past, same discipline as every other residual gap in this project:**
+
+1. `products[].vid` is a *variant* id - same unconfirmed
+   `product_id == vid` assumption already flagged for `get_shipping_cost()`.
+2. `shippingProvince` is required, but this project's `ShopifyOrder.shipping_address`
+   (see "Orders list query" above) never captures a province/state field at
+   all - `get_recent_orders()`'s verified query doesn't request one. A real
+   order to a province-requiring destination will fail this call with a
+   clear CJ error naming the missing field, not silently send wrong data.
+3. `orderNumber` is required but `CJClient.create_order()`'s own signature
+   (`product_id, quantity, shipping_address`) has no order-reference
+   parameter to source it from. The code reads an optional
+   `shipping_address["order_number"]` if the caller supplies one, else
+   generates a random id locally - not traceable back to the originating
+   Shopify order. A follow-up pass should thread the real Shopify order id
+   through instead; noted here as scoped, known remaining work, not an
+   oversight.
+
+Only fields confirmed `Y` (required) are sent; fields whose meaning wasn't
+independently confirmed (`orderFlow`, `storageId`, `shopLogisticsType`,
+`payType`) are deliberately left out rather than copied from the example
+value without understanding them. `fromCountryCode: "CN"` and
+`platform: "shopify"` are included - the former matching this project's
+same documented CN-origin default as `get_shipping_cost()`, the latter
+directly matching this project's actual platform, both low-risk inclusions
+rather than guesses.
+
+Every other CJ endpoint (`track_shipment`) is still unverified - see
+UNVERIFIED.md.

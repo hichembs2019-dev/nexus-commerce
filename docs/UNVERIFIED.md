@@ -13,15 +13,25 @@ domains were blocked and why.
 session's egress proxy (organization policy denial, not a transient failure
 - see `SOURCES.md`). On 2026-10-11 the owner opened it directly from their
 own device, and it loaded - CJ's full official docs site. Authentication, product search, product
-details, and shipping cost are now verified and implemented for real - see
-`SOURCES.md` "CJ Dropshipping > Authentication" / "Product search" /
-"Product details" / "Shipping cost". Specifically still unverified, and
-therefore not hardcoded anywhere:
+details, shipping cost, and order creation are now verified and implemented
+for real - see `SOURCES.md` "CJ Dropshipping > Authentication" / "Product
+search" / "Product details" / "Shipping cost" / "Create order". Specifically
+still unverified, and therefore not hardcoded anywhere:
 
-- Order-creation endpoint, request body shape, and response shape
 - Shipment-tracking-by-CJ-order-id flow (the verified `logistic/trackInfo`
   endpoint takes a shipping tracking number, not a CJ order id - how to get
   from one to the other is still unconfirmed, see `SOURCES.md`)
+- "1.1 Create Order V2" was never opened/compared against V3 directly - V3
+  was chosen because its own page explicitly flags its `cjPayUrl` field as
+  deprecated, the kind of currency signal this project looks for, not
+  because V2 was confirmed inferior.
+
+`create_order()` carries three explicitly-flagged gaps, documented in full
+in `SOURCES.md` "Create order": `product_id` passed as `vid` (same
+unconfirmed assumption as `get_shipping_cost()`), `shippingProvince` has no
+real source in this project's verified Shopify order data, and
+`orderNumber` is generated locally rather than traced back to the
+originating Shopify order.
 
 `search_products()` has one residual, explicitly-flagged gap: whether
 `GET /product/listV2`'s parameters go as a query string or a JSON body

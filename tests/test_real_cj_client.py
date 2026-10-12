@@ -276,3 +276,88 @@ def test_get_shipping_cost_raises_clearly_on_failure(monkeypatch):
 
     with pytest.raises(RuntimeError, match="CJ freight calculation failed"):
         client.get_shipping_cost("P1", "US")
+
+
+def test_create_order_sends_mapped_fields_and_returns_the_cj_order_id(monkeypatch):
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    calls = []
+
+    def fake_post(url, *, json, headers, timeout):
+        if url.endswith("/authentication/getAccessToken"):
+            return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+        calls.append((url, json, headers))
+        return _FakeResponse(
+            {
+                "code": 200,
+                "result": True,
+                "data": {"orderId": "CJ123456", "orderStatus": "CREATED", "interceptOrderReasons": []},
+            }
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    order_id = client.create_order(
+        product_id="P1",
+        quantity=2,
+        shipping_address={
+            "name": "Jane Doe",
+            "address1": "1 Main St",
+            "city": "Springfield",
+            "country_code": "US",
+            "province": "IL",
+            "zip": "62701",
+            "phone": "5551234",
+        },
+    )
+
+    assert order_id == "CJ123456"
+    url, body, headers = calls[0]
+    assert url == "https://developers.cjdropshipping.com/api2.0/v1/shopping/order/createOrderV3"
+    assert body["shippingCustomerName"] == "Jane Doe"
+    assert body["shippingAddress"] == "1 Main St"
+    assert body["shippingCity"] == "Springfield"
+    assert body["shippingCountryCode"] == "US"
+    assert body["shippingProvince"] == "IL"
+    assert body["products"] == [{"vid": "P1", "quantity": 2}]
+    assert headers["CJ-Access-Token"] == "tok"
+
+
+def test_create_order_raises_on_intercept_reasons_even_when_result_is_true(monkeypatch):
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json, headers, timeout):
+        if url.endswith("/authentication/getAccessToken"):
+            return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+        return _FakeResponse(
+            {
+                "code": 200,
+                "result": True,
+                "data": {"orderId": None, "interceptOrderReasons": [{"code": 1001, "message": "stock issue"}]},
+            }
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    with pytest.raises(RuntimeError, match="CJ order creation intercepted"):
+        client.create_order(product_id="P1", quantity=1, shipping_address={})
+
+
+def test_create_order_raises_clearly_on_failure(monkeypatch):
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json, headers, timeout):
+        if url.endswith("/authentication/getAccessToken"):
+            return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+        return _FakeResponse({"code": 1600300, "result": False, "message": "shippingProvince is required"})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    with pytest.raises(RuntimeError, match="CJ order creation failed"):
+        client.create_order(product_id="P1", quantity=1, shipping_address={})

@@ -12,10 +12,10 @@ domains were blocked and why.
 `developers.cjdropshipping.com` returned a `403` from this project's own dev
 session's egress proxy (organization policy denial, not a transient failure
 - see `SOURCES.md`). On 2026-10-11 the owner opened it directly from their
-own device, and it loaded - CJ's full official docs site. Authentication and product search are
-now verified and implemented for real - see `SOURCES.md` "CJ Dropshipping >
-Authentication" / "Product search". Specifically still unverified, and
-therefore not hardcoded anywhere:
+own device, and it loaded - CJ's full official docs site. Authentication, product search, and product
+details are now verified and implemented for real - see `SOURCES.md` "CJ
+Dropshipping > Authentication" / "Product search" / "Product details".
+Specifically still unverified, and therefore not hardcoded anywhere:
 
 - Pricing and per-destination-country shipping-cost endpoint and fields
 - Order-creation endpoint, request body shape, and response shape

@@ -109,7 +109,24 @@ class RealCJClient(CJClient):
         raise NotImplementedError(self._UNVERIFIED)
 
     def get_product(self, product_id: str) -> CJProduct:
-        raise NotImplementedError(self._UNVERIFIED)
+        # Verified 2026-10-12 - see docs/SOURCES.md "CJ Dropshipping >
+        # Product details". Field is "productNameEn" here, not "nameEn" as
+        # in search_products()'s listV2 response - confirmed, not assumed
+        # to match.
+        import httpx
+
+        response = httpx.get(
+            f"{self._base_url}/product/query",
+            params={"pid": product_id},
+            headers={"CJ-Access-Token": self._get_access_token()},
+            timeout=30,
+        )
+        payload = response.json()
+        if not payload.get("result"):
+            raise RuntimeError(f"CJ product query failed: {payload.get('message')}")
+
+        data = payload["data"]
+        return CJProduct(product_id=data["pid"], title=data["productNameEn"], price=float(data["sellPrice"]))
 
     def create_order(self, *, product_id: str, quantity: int, shipping_address: dict) -> str:
         raise NotImplementedError(self._UNVERIFIED)

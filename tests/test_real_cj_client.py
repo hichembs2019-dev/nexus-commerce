@@ -149,3 +149,61 @@ def test_search_products_raises_clearly_on_failure(monkeypatch):
 
     with pytest.raises(RuntimeError, match="CJ product search failed"):
         client.search_products("hoodie")
+
+
+def test_get_product_sends_pid_and_maps_the_real_response_shape(monkeypatch):
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json, headers, timeout):
+        return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+
+    calls = []
+
+    def fake_get(url, *, params, headers, timeout):
+        calls.append((url, params, headers))
+        return _FakeResponse(
+            {
+                "code": 200,
+                "result": True,
+                "data": {
+                    "pid": "000B9312-456A-4D31-94BD-B083E2A198E8",
+                    "productNameEn": "Small trailer model",
+                    "sellPrice": 58.09,
+                },
+            }
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    product = client.get_product("000B9312-456A-4D31-94BD-B083E2A198E8")
+
+    assert len(calls) == 1
+    url, params, headers = calls[0]
+    assert url == "https://developers.cjdropshipping.com/api2.0/v1/product/query"
+    assert params == {"pid": "000B9312-456A-4D31-94BD-B083E2A198E8"}
+    assert headers == {"CJ-Access-Token": "tok"}
+
+    assert product == CJProduct(
+        product_id="000B9312-456A-4D31-94BD-B083E2A198E8", title="Small trailer model", price=58.09
+    )
+
+
+def test_get_product_raises_clearly_on_failure(monkeypatch):
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json, headers, timeout):
+        return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+
+    def fake_get(url, *, params, headers, timeout):
+        return _FakeResponse({"code": 1600100, "result": False, "message": "Param error"})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    with pytest.raises(RuntimeError, match="CJ product query failed"):
+        client.get_product("missing")

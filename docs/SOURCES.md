@@ -554,5 +554,39 @@ convention for a `GET` endpoint - but this project's own earlier CJ pages
 their `curl` examples, so this is a reasonable default, not a confirmed
 fact. Worth re-checking against a real response before relying on it.
 
-Every other CJ endpoint (`get_shipping_cost`, `get_product`, `create_order`,
+### Product details (get_product) - verified 2026-10-12
+
+From CJ's own docs, "3 Product > 1 Products > 1.5 Product Details (GET)".
+
+```
+GET https://developers.cjdropshipping.com/api2.0/v1/product/query
+CJ-Access-Token: <access token>
+```
+
+Parameters: exactly one of `pid` (product id), `productSku`, or
+`variantSku` is required; `features` and `countryCode` are optional.
+This project always queries by `pid`.
+
+Response (`data`, trimmed to the fields this project reads):
+```json
+{
+  "code": 200,
+  "result": true,
+  "data": {
+    "pid": "000B9312-456A-4D31-94BD-B083E2A198E8",
+    "productNameEn": "Small trailer model",
+    "sellPrice": 58.09
+  }
+}
+```
+
+Note the field is `productNameEn` here, **not** `nameEn` as in the
+`listV2` search response - two different endpoints, two different field
+names for the same concept, confirmed from the docs rather than assumed to
+match.
+
+`RealCJClient.get_product()` maps `pid` → `CJProduct.product_id`,
+`productNameEn` → `title`, `sellPrice` → `price` (float).
+
+Every other CJ endpoint (`get_shipping_cost`, `create_order`,
 `track_shipment`) is still unverified - see UNVERIFIED.md.

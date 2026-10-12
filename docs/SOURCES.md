@@ -588,5 +588,58 @@ match.
 `RealCJClient.get_product()` maps `pid` → `CJProduct.product_id`,
 `productNameEn` → `title`, `sellPrice` → `price` (float).
 
-Every other CJ endpoint (`get_shipping_cost`, `create_order`,
-`track_shipment`) is still unverified - see UNVERIFIED.md.
+### Shipping cost (get_shipping_cost) - verified 2026-10-12
+
+From CJ's own docs, "6 Logistic > 1 Logistics > 1.1 Freight Calculation
+(POST)". CJ's own page notes this is "a simple mode of logistics trial
+calculation" and points to "1.2 Freight Calculation Tip" for more accuracy
+- 1.2 was investigated too, but its required fields (`weight`, `volume`,
+`wrapWeight`) have no verified source in this project (no confirmed `volume`
+field anywhere in `get_product()`'s response), so 1.1 is used instead: it
+needs only a variant id and quantity, which CJ resolves internally.
+
+```
+POST https://developers.cjdropshipping.com/api2.0/v1/logistic/freightCalculate
+CJ-Access-Token: <access token>
+Content-Type: application/json
+
+{
+  "startCountryCode": "CN",
+  "endCountryCode": "US",
+  "products": [{"quantity": 2, "vid": "439FC05B-1311-4349-87FA-1E..."}]
+}
+```
+
+Response:
+```json
+{
+  "code": 200,
+  "result": true,
+  "message": "Success",
+  "data": [
+    {"logisticAging": "2-5", "logisticPrice": 4.71, "logisticPriceCn": 30.54, "logisticName": "USPS+"}
+  ],
+  "requestId": "...",
+  "success": true
+}
+```
+
+`data` is a list of shipping options; `RealCJClient.get_shipping_cost()`
+uses the first option's `logisticPrice` (USD) as a simple, documented
+choice - CJ doesn't mark one option as "recommended" in this response shape,
+same kind of simple-default decision as `MARKUP_MULTIPLIER` elsewhere in
+this project.
+
+`startCountryCode` is hardcoded `"CN"` - every CJ example seen this session
+ships from China, and this project has no configured alternate origin.
+
+**Explicitly flagged, not guessed past**: `products[].vid` is a *variant*
+id, not the *product* id `CJProduct.product_id` carries. For a product with
+no real variants these may coincide, but this was never confirmed - the
+code passes `product_id` as `vid` directly, documented here as an assumption
+worth re-checking against a real product once a real CJ account is paying
+for calls, not treated as equivalent to the parts of this integration that
+were independently confirmed field-by-field.
+
+Every other CJ endpoint (`create_order`, `track_shipment`) is still
+unverified - see UNVERIFIED.md.

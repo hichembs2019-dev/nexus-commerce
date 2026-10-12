@@ -106,7 +106,30 @@ class RealCJClient(CJClient):
         return products
 
     def get_shipping_cost(self, product_id: str, country: str) -> float:
-        raise NotImplementedError(self._UNVERIFIED)
+        # Verified 2026-10-12 - see docs/SOURCES.md "CJ Dropshipping >
+        # Shipping cost". "CN" origin and "first option" are this project's
+        # own simple defaults, not CJ's. product_id is passed as "vid"
+        # (variant id) - unconfirmed assumption, flagged in SOURCES.md.
+        import httpx
+
+        response = httpx.post(
+            f"{self._base_url}/logistic/freightCalculate",
+            json={
+                "startCountryCode": "CN",
+                "endCountryCode": country,
+                "products": [{"quantity": 1, "vid": product_id}],
+            },
+            headers={"CJ-Access-Token": self._get_access_token(), "Content-Type": "application/json"},
+            timeout=30,
+        )
+        payload = response.json()
+        if not payload.get("result"):
+            raise RuntimeError(f"CJ freight calculation failed: {payload.get('message')}")
+
+        options = payload["data"]
+        if not options:
+            raise RuntimeError(f"no shipping options returned for product {product_id} to {country}")
+        return float(options[0]["logisticPrice"])
 
     def get_product(self, product_id: str) -> CJProduct:
         # Verified 2026-10-12 - see docs/SOURCES.md "CJ Dropshipping >

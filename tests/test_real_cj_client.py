@@ -207,3 +207,72 @@ def test_get_product_raises_clearly_on_failure(monkeypatch):
 
     with pytest.raises(RuntimeError, match="CJ product query failed"):
         client.get_product("missing")
+
+
+def test_get_shipping_cost_sends_the_country_and_vid_and_returns_the_first_options_price(monkeypatch):
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post_auth(url, *, json, headers, timeout):
+        if url.endswith("/authentication/getAccessToken"):
+            return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+        return _FakeResponse(
+            {
+                "code": 200,
+                "result": True,
+                "data": [
+                    {"logisticAging": "2-5", "logisticPrice": 4.71, "logisticPriceCn": 30.54, "logisticName": "USPS+"},
+                    {"logisticAging": "5-10", "logisticPrice": 2.00, "logisticPriceCn": 14.0, "logisticName": "Cheap Slow"},
+                ],
+            }
+        )
+
+    calls = []
+
+    def fake_post(url, *, json=None, headers, timeout):
+        calls.append((url, json, headers))
+        return fake_post_auth(url, json=json, headers=headers, timeout=timeout)
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    cost = client.get_shipping_cost("P1", "US")
+
+    assert cost == 4.71  # first option, not the cheapest - a documented simple default
+    freight_call = calls[-1]
+    url, body, headers = freight_call
+    assert url == "https://developers.cjdropshipping.com/api2.0/v1/logistic/freightCalculate"
+    assert body == {"startCountryCode": "CN", "endCountryCode": "US", "products": [{"quantity": 1, "vid": "P1"}]}
+    assert headers["CJ-Access-Token"] == "tok"
+
+
+def test_get_shipping_cost_raises_clearly_when_no_options_are_returned(monkeypatch):
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json=None, headers, timeout):
+        if url.endswith("/authentication/getAccessToken"):
+            return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+        return _FakeResponse({"code": 200, "result": True, "data": []})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    with pytest.raises(RuntimeError, match="no shipping options"):
+        client.get_shipping_cost("P1", "US")
+
+
+def test_get_shipping_cost_raises_clearly_on_failure(monkeypatch):
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json=None, headers, timeout):
+        if url.endswith("/authentication/getAccessToken"):
+            return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+        return _FakeResponse({"code": 1600300, "result": False, "message": "weight is required"})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    with pytest.raises(RuntimeError, match="CJ freight calculation failed"):
+        client.get_shipping_cost("P1", "US")

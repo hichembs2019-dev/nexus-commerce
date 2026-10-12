@@ -82,7 +82,28 @@ class RealCJClient(CJClient):
         return self._access_token
 
     def search_products(self, query: str) -> list[CJProduct]:
-        raise NotImplementedError(self._UNVERIFIED)
+        # Verified 2026-10-12 - see docs/SOURCES.md "CJ Dropshipping >
+        # Product search". Uses listV2 (elasticsearch-backed, supports
+        # keyword search), not the deprecated listV1.
+        import httpx
+
+        response = httpx.get(
+            f"{self._base_url}/product/listV2",
+            params={"keyWord": query},
+            headers={"CJ-Access-Token": self._get_access_token()},
+            timeout=30,
+        )
+        payload = response.json()
+        if not payload.get("result"):
+            raise RuntimeError(f"CJ product search failed: {payload.get('message')}")
+
+        products: list[CJProduct] = []
+        for block in payload["data"]["content"]:
+            for item in block.get("productList", []):
+                products.append(
+                    CJProduct(product_id=item["id"], title=item["nameEn"], price=float(item["sellPrice"]))
+                )
+        return products
 
     def get_shipping_cost(self, product_id: str, country: str) -> float:
         raise NotImplementedError(self._UNVERIFIED)

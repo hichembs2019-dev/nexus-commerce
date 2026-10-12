@@ -492,7 +492,67 @@ Confirmed two-step credential model, not one flat API key:
 Rate limit noted on the same page: 1 call/second (QPS=1) for this endpoint,
 same as other CJ endpoints.
 
-Every other CJ endpoint (search_products, get_shipping_cost, get_product,
-create_order, track_shipment) is still unverified - see UNVERIFIED.md.
-`RealCJClient` now implements real session/token setup but every data
-method still raises `NotImplementedError`.
+### Product search (search_products) - verified 2026-10-12
+
+From CJ's own docs, "3 Product > 1 Products > 1.2 Product List V2 (GET)".
+Note: "1.4 Product List (GET)" exists too but is explicitly marked
+**deprecated** in favor of V2 ("backed by elasticsearch... plus keyword
+search"), so V2 is what this project uses.
+
+```
+GET https://developers.cjdropshipping.com/api2.0/v1/product/listV2
+CJ-Access-Token: <access token>
+```
+
+Parameters (all optional; `keyWord` is the one this project sets):
+`keyWord` (search keyword, string), `page`, `size`, `categoryId`,
+`lv2categoryList`, `lv3categoryList`, `countryCode`, `startSellPrice`,
+`endSellPrice`, and several more filter/sort fields not used here.
+
+Response:
+```json
+{
+  "code": 200,
+  "result": true,
+  "message": "Success",
+  "data": {
+    "pageSize": 20,
+    "pageNumber": 1,
+    "totalRecords": 1000,
+    "totalPages": 50,
+    "content": [
+      {
+        "productList": [
+          {
+            "id": "04A22450-67F0-4617-A132-E7AE7F8...",
+            "nameEn": "Personalized Belly-baring ...",
+            "sku": "CJNSSYWY01847",
+            "spu": "CJNSSYWY01847",
+            "bigImage": "https://cc-west-usa.oss-...",
+            "sellPrice": "11.85",
+            "nowPrice": "9.50"
+          }
+        ],
+        "relatedCategoryList": [{"categoryId": "xxx", "categoryName": "Hoodies"}],
+        "keyWord": "hoodie",
+        "keyWordOld": "hoodie"
+      }
+    ]
+  },
+  "requestId": "..."
+}
+```
+
+`RealCJClient.search_products()` maps `id` → `CJProduct.product_id`,
+`nameEn` → `title`, `sellPrice` (string) → `price` (float).
+
+One detail genuinely not confirmed from the (horizontally-cut-off) `CURL`
+block: whether `GET /product/listV2`'s parameters go as a query string or a
+JSON body. The code sends them as query parameters - the standard HTTP/REST
+convention for a `GET` endpoint - but this project's own earlier CJ pages
+(Storage) showed `GET` endpoints still using `--data-raw` JSON bodies in
+their `curl` examples, so this is a reasonable default, not a confirmed
+fact. Worth re-checking against a real response before relying on it.
+
+Every other CJ endpoint (`get_shipping_cost`, `get_product`, `create_order`,
+`track_shipment`) is still unverified - see UNVERIFIED.md.

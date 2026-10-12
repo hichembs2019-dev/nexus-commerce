@@ -12,15 +12,20 @@ domains were blocked and why.
 `developers.cjdropshipping.com` returned a `403` from this project's own dev
 session's egress proxy (organization policy denial, not a transient failure
 - see `SOURCES.md`). On 2026-10-11 the owner opened it directly from their
-own device, and it loaded - CJ's full official docs site. Authentication is
+own device, and it loaded - CJ's full official docs site. Authentication and product search are
 now verified and implemented for real - see `SOURCES.md` "CJ Dropshipping >
-Authentication". Specifically still unverified, and therefore not hardcoded
-anywhere:
+Authentication" / "Product search". Specifically still unverified, and
+therefore not hardcoded anywhere:
 
-- Product search endpoint and its request/response fields
 - Pricing and per-destination-country shipping-cost endpoint and fields
 - Order-creation endpoint, request body shape, and response shape
 - Shipment-tracking endpoint and response shape
+
+`search_products()` has one residual, explicitly-flagged gap: whether
+`GET /product/listV2`'s parameters go as a query string or a JSON body
+wasn't confirmed (the `curl` example was cut off) - the code uses query
+parameters as the standard REST convention, documented as the defensible
+choice, not a certainty. See `SOURCES.md` "Product search".
 
 `src/integrations/cj_client.py` defines `CJClient` as an abstract interface
 (method names are this project's own domain vocabulary - `search_products`,

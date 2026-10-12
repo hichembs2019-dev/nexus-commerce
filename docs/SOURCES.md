@@ -824,3 +824,44 @@ confirmed from CJ's own docs, not assumed.
 
 Every method on `CJClient` is now verified and implemented. No
 `NotImplementedError` remains in `src/integrations/cj_client.py`.
+
+### Live end-to-end proof - 2026-10-12
+
+Both `RealCJClient` and `RealShopifyClient` were run live, for real, from
+this project's own code (not hand-written curl) against the owner's real
+accounts, after the dev session's network policy was widened to reach
+`developers.cjdropshipping.com` and `*.myshopify.com`:
+
+- `RealCJClient("$CJ_API_KEY", ...).search_products("phone case")` returned
+  10 real live CJ products with real prices and real CJ product ids.
+- `RealShopifyClient(...).get_recent_orders()` authenticated for real
+  (`client_credentials` grant, real `shpat_...` access token, scope
+  `write_products,write_orders,write_fulfillments`) and queried the real
+  store's live Admin API - 0 orders, correct for a brand-new dev store with
+  none yet, not an error.
+
+**Shopify install fix, found live, not in any doc paraphrase:** the Dev
+Dashboard app's released version had `use_legacy_install_flow: true`
+(visible on the version's detail page), which routes installs through the
+old authorization-code flow and needs a real callback server to complete -
+exactly the dead end this project avoided weeks ago by switching to the
+client credentials grant in the first place. A released version can't be
+edited, so a new version (`nexus-commerce-2`) was created with that
+checkbox cleared and `application_url`/`redirect_urls` set to Shopify's own
+documented placeholder (`https://shopify.dev/apps/default-app-home`, not
+`example.com`, which is explicitly reserved for documentation examples and
+says so on the page). Only after releasing that version and re-running
+**Install app** on the correct store did `/admin/oauth/access_token` stop
+returning `app_not_installed` and start returning a real token.
+
+**Real bug found and fixed by this same live run - not a guess:** CJ's
+`sellPrice` field is a single number for a single-variant product but a
+`"low -- high"` range STRING (e.g. `"2.13 -- 7.21"`) for a multi-variant
+one - `search_products()` crashed on this live with a real product. Fixed
+with `_parse_cj_price()` in `src/integrations/cj_client.py`, which takes the
+HIGH end of a range (cost estimates must never be optimistic, given the
+owner's own standing instruction that a purchase must never become a loss).
+Regression tests: `test_search_products_parses_a_price_range_sellprice_using_the_high_end`
+and `test_get_product_parses_a_price_range_sellprice_using_the_high_end` in
+`tests/test_real_cj_client.py` - both mutation-tested (fail with the fix
+reverted to bare `float()`, pass with it restored).

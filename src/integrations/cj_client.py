@@ -47,6 +47,24 @@ class CJClient(ABC):
     def track_shipment(self, cj_order_id: str) -> TrackingInfo: ...
 
 
+def _parse_cj_price(raw: str | float | int) -> float:
+    """CJ's "sellPrice" comes back as a plain number in some responses
+    (confirmed live via get_product) but as a "low -- high" range STRING
+    (e.g. "2.13 -- 7.21") in others, for a product with several variants at
+    different prices - found live on 2026-10-12 when a real search crashed
+    on `float("2.13 -- 7.21")`. A range takes the HIGH end: this value feeds
+    margin checks, and the owner's own standing instruction is that a
+    purchase must never turn into a loss - so cost estimates must never be
+    optimistic. The exact per-variant price is looked up for real before any
+    order is placed (get_shipping_cost / create_order take a specific
+    product_id, not this aggregate figure).
+    """
+    if isinstance(raw, str) and "--" in raw:
+        _, high = raw.split("--")
+        return float(high.strip())
+    return float(raw)
+
+
 class RealCJClient(CJClient):
     """Every method is now verified and implemented - see the module
     docstring and docs/SOURCES.md "CJ Dropshipping" for the full exchange,
@@ -101,7 +119,7 @@ class RealCJClient(CJClient):
         for block in payload["data"]["content"]:
             for item in block.get("productList", []):
                 products.append(
-                    CJProduct(product_id=item["id"], title=item["nameEn"], price=float(item["sellPrice"]))
+                    CJProduct(product_id=item["id"], title=item["nameEn"], price=_parse_cj_price(item["sellPrice"]))
                 )
         return products
 
@@ -149,7 +167,7 @@ class RealCJClient(CJClient):
             raise RuntimeError(f"CJ product query failed: {payload.get('message')}")
 
         data = payload["data"]
-        return CJProduct(product_id=data["pid"], title=data["productNameEn"], price=float(data["sellPrice"]))
+        return CJProduct(product_id=data["pid"], title=data["productNameEn"], price=_parse_cj_price(data["sellPrice"]))
 
     def create_order(self, *, product_id: str, quantity: int, shipping_address: dict) -> str:
         # Verified 2026-10-12 - see docs/SOURCES.md "CJ Dropshipping >

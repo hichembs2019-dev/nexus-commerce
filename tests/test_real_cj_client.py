@@ -133,6 +133,44 @@ def test_search_products_sends_the_keyword_and_maps_the_real_response_shape(monk
     ]
 
 
+def test_search_products_parses_a_price_range_sellprice_using_the_high_end(monkeypatch):
+    # Found live on 2026-10-12: a real CJ search returned sellPrice
+    # "2.13 -- 7.21" for a multi-variant product and float() crashed on it.
+    # The high end is used deliberately (see _parse_cj_price's docstring) so
+    # margin checks never under-estimate cost.
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json, headers, timeout):
+        return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+
+    def fake_get(url, *, params, headers, timeout):
+        return _FakeResponse(
+            {
+                "code": 200,
+                "result": True,
+                "data": {
+                    "content": [
+                        {
+                            "productList": [
+                                {"id": "P1", "nameEn": "Multi-variant hoodie", "sku": "SKU1", "sellPrice": "2.13 -- 7.21"},
+                            ],
+                            "keyWord": "hoodie",
+                        }
+                    ]
+                },
+            }
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    products = client.search_products("hoodie")
+
+    assert products == [CJProduct(product_id="P1", title="Multi-variant hoodie", price=7.21)]
+
+
 def test_search_products_raises_clearly_on_failure(monkeypatch):
     client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
 
@@ -189,6 +227,31 @@ def test_get_product_sends_pid_and_maps_the_real_response_shape(monkeypatch):
     assert product == CJProduct(
         product_id="000B9312-456A-4D31-94BD-B083E2A198E8", title="Small trailer model", price=58.09
     )
+
+
+def test_get_product_parses_a_price_range_sellprice_using_the_high_end(monkeypatch):
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json, headers, timeout):
+        return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+
+    def fake_get(url, *, params, headers, timeout):
+        return _FakeResponse(
+            {
+                "code": 200,
+                "result": True,
+                "data": {"pid": "P1", "productNameEn": "Multi-variant hoodie", "sellPrice": "2.13 -- 7.21"},
+            }
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    product = client.get_product("P1")
+
+    assert product == CJProduct(product_id="P1", title="Multi-variant hoodie", price=7.21)
 
 
 def test_get_product_raises_clearly_on_failure(monkeypatch):

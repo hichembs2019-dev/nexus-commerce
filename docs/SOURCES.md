@@ -152,13 +152,40 @@ one. `RealShopifyClient` therefore does this exchange itself (caching the
 result per process, like `RealCJClient` already does for its own access
 token) rather than expecting a manually-obtained static token in `.env` -
 `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` (both from the Dev
-Dashboard's own "Credenziali"/Credentials page, already visible without any
-install step) are the only two Shopify secrets this project now needs.
+Dashboard's own "Credenziali"/Credentials page) are the only two Shopify
+secrets this project now needs.
 Usage, confirmed on the same page: header `X-Shopify-Access-Token:
 <access_token>` on `https://{shop}.myshopify.com/admin/api/{version}/graphql.json`
 - the `ShopifyAPI` package's own `Session`/`activate_session` already send
 this header internally, so no code changes were needed there beyond how the
 token itself is obtained.
+
+**Correction - verified 2026-10-12, live test then re-read of source:** the
+"no merchant-install step needed" claim above was wrong. A live call with the
+real `SHOPIFY_CLIENT_ID`/`SHOPIFY_CLIENT_SECRET` from `.env` against
+`https://zjwmtu-wn.myshopify.com/admin/oauth/access_token` returned
+`400 Oauth error app_not_installed`, not a token - the first live, non-mocked
+proof this project had of this exchange, and it contradicted the earlier
+"Ask assistant" summary. Re-fetched `shopify.dev`'s own tutorial pages
+directly (network policy on this dev session was widened to allow it) rather
+than trust the earlier paraphrase:
+
+- https://shopify.dev/docs/apps/build/authentication-authorization/client-credentials-grant.md
+  lists three requirements, not one: a Dev Dashboard app, access scopes
+  released on a version, **and** "Installed app - You've installed your app
+  on your store."
+- https://shopify.dev/docs/apps/build/dev-dashboard/create-apps-using-dev-dashboard.md
+  "Step 3: Install your app" - open the app in the Dev Dashboard, select
+  **Install app** (top of the **Installs** card, or the same action in the
+  app row's **⋯** menu), which opens Shopify's own OAuth consent screen in a
+  new tab (not a callback URL this project has to host), select/create the
+  store, select **Install**.
+
+So the client credentials grant genuinely needs no redirect/callback URL
+(that part of the original claim was right - that's what makes it different
+from the authorization-code grant), but it is **not** install-free: "install"
+here is a one-click action inside the Dev Dashboard itself, done once, not a
+merchant-facing OAuth redirect this project would have to implement.
 
 ### productCreate - verified 2026-10-11
 

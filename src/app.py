@@ -47,13 +47,16 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
     if not force_mocks and settings.shopify_configured:
         shopify: ShopifyClient = RealShopifyClient(
             settings.shopify_shop_url,
-            settings.shopify_access_token,
+            settings.shopify_client_id,
+            settings.shopify_client_secret,
             settings.shopify_api_version,
             settings.shopify_currency_code,
         )
     else:
         if not force_mocks:
-            logger.warning("SHOPIFY_SHOP_URL/SHOPIFY_ACCESS_TOKEN not set - using MockShopifyClient")
+            logger.warning(
+                "SHOPIFY_SHOP_URL/SHOPIFY_CLIENT_ID/SHOPIFY_CLIENT_SECRET not set - using MockShopifyClient"
+            )
         shopify = MockShopifyClient()
 
     if not force_mocks and settings.cj_configured:

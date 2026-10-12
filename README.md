@@ -81,30 +81,30 @@ docker compose up -d --build
 
 ### أولاً: ما هو جاهز للتشغيل الحقيقي الآن
 
-**كل شيء جاهز من حيث الكود.** لا يوجد أي `NotImplementedError` متبقٍ في
-`RealShopifyClient` أو `RealCJClient` — كل استعلام ومoutation حقيقي، مبني
+**كل شيء جاهز، كوداً ومفاتيح.** لا يوجد أي `NotImplementedError` متبقٍ في
+`RealShopifyClient` أو `RealCJClient` — كل استعلام وmutation حقيقي، مبني
 على توثيق Shopify وCJ الرسمي (التفاصيل والمصادر في `docs/SOURCES.md`).
 
-- **Anthropic (تفكير الوكلاء الخمسة)**: جاهز وحقيقي.
-- **Telegram (موافقتك/رفضك)**: جاهز وحقيقي.
-- **Shopify**: جاهز وحقيقي — نشر منتج، قراءة الطلبات وحالة الدفع، تعديل
-  سعر، تحديث تتبع. يحتاج فقط `SHOPIFY_SHOP_URL` و`SHOPIFY_ACCESS_TOKEN`
-  حقيقيَّين.
-- **CJ Dropshipping**: جاهز وحقيقي — بحث، تفاصيل منتج، تكلفة شحن، **طلب
-  فعلي من المورّد**، تتبع شحنة. يحتاج فقط `CJ_API_KEY` حقيقياً.
+- **Anthropic (تفكير الوكلاء الخمسة)**: حقيقي.
+- **Telegram (موافقتك/رفضك)**: حقيقي.
+- **Shopify**: حقيقي — نشر منتج، قراءة الطلبات وحالة الدفع، تعديل سعر،
+  تحديث تتبع. المصادقة عبر **Client credentials grant** (`SHOPIFY_CLIENT_ID`
+  + `SHOPIFY_CLIENT_SECRET` — يُنشئهما الكود نفسه توكن وصول تلقائياً، بلا
+  أي خطوة تثبيت يدوية أو OAuth).
+- **CJ Dropshipping**: حقيقي — بحث، تفاصيل منتج، تكلفة شحن، **طلب فعلي من
+  المورّد**، تتبع شحنة.
 
 بضعة حقول صغيرة موثّقة صراحة كافتراضات غير مؤكدة 100% (لا كحقائق) — راجع
 `docs/UNVERIFIED.md` قبل أول طلب حقيقي؛ الأبرز: `shippingProvince` (محافظة
 عنوان الشحن) لا مصدر لها حالياً في بيانات Shopify التي يقرؤها المشروع،
 فطلب لوجهة تتطلب محافظة سيرجع خطأً واضحاً من CJ بدل بيانات خاطئة بصمت.
 
-### ثانياً: المفتاحان الوحيدان الناقصان فعلياً
+### ثانياً: من أين تأتي كل مفاتيحك (إن أنشأت مشروعاً جديداً من الصفر)
 
-- **`SHOPIFY_ACCESS_TOKEN`**: يُؤخذ من لوحة تحكم متجرك → Settings → Apps
-  and sales channels → Develop apps → أنشئ تطبيقاً → فعّل صلاحيات Admin API
-  (`read_products`, `write_products`, `read_orders`, `write_orders`,
-  `read_fulfillments`, `write_fulfillments`) → ثبّته على متجرك → انسخ
-  التوكن (يبدأ بـ `shpat_...`).
+- **`SHOPIFY_CLIENT_ID` و`SHOPIFY_CLIENT_SECRET`**: من `dev.shopify.com` →
+  تطبيقك → **App settings** → قسم **"Credenziali"/Credentials** — ظاهران
+  مباشرة بلا أي تثبيت أو موافقة تاجر (لأن هذا تطبيق يعمل على متجرك أنت
+  فقط). لا حاجة لأي توكن `shpat_...` يدوي.
 - **`CJ_API_KEY`**: من حسابك على `cjdropshipping.com` → ثبّت تطبيق "API" من
   App Store الخاص بـ CJ → صفحة "Get API Key" → Add API → Type: API Key →
   انسخ المفتاح.
@@ -112,12 +112,13 @@ docker compose up -d --build
 ### ثالثاً: خطوات الانتقال الفعلية، بالترتيب
 
 1. **عبّئ كل المفاتيح في `.env`**: `ANTHROPIC_API_KEY`، `SHOPIFY_SHOP_URL`،
-   `SHOPIFY_ACCESS_TOKEN`، `CJ_API_KEY` (`CJ_API_BASE_URL` له قيمة افتراضية
-   صحيحة بالفعل)، `TELEGRAM_BOT_TOKEN`، `TELEGRAM_CHAT_ID`.
+   `SHOPIFY_CLIENT_ID`، `SHOPIFY_CLIENT_SECRET`، `CJ_API_KEY`
+   (`CJ_API_BASE_URL` له قيمة افتراضية صحيحة بالفعل)، `TELEGRAM_BOT_TOKEN`،
+   `TELEGRAM_CHAT_ID`.
 2. **اضبط حدود الصرف بعناية**: `MAX_ORDER_COST`، `DAILY_SPEND_LIMIT`،
    `MIN_MARGIN` — هذه هي خط الدفاع الأول قبل أن يصل أي مقترح حتى إلى الوكلاء
    الخمسة.
-3. **شغّل الاختبارات كاملة** (`pytest -v`) — يجب أن تبقى كلها ناجحة (96 حالياً).
+3. **شغّل الاختبارات كاملة** (`pytest -v`) — يجب أن تبقى كلها ناجحة (102 حالياً).
 4. **اختبر بـ `DRY_RUN=true` أولاً** ضد حسابك الحقيقي (Shopify/CJ حقيقيان،
    لكن بلا تنفيذ فعلي) وراقب سجل التدقيق (`audit_log` في قاعدة البيانات)
    وتأكد أن القراءات (الطلبات، الأسعار) صحيحة.
@@ -148,7 +149,7 @@ src/
   app.py         نقطة اختيار حقيقي-أو-mock لكل خدمة بحسب ما هو مضبوط في .env
   scheduler.py   وظائف APScheduler الساعية واليومية
   main.py        نقطة التشغيل الدائمة (الخدمة)
-tests/           96 اختباراً، منها محاكاة end-to-end كاملة بوضع DRY_RUN
+tests/           102 اختباراً، منها محاكاة end-to-end كاملة بوضع DRY_RUN
                  واختبارات Shopify/CJ الحقيقيين (الشبكة فقط محاكاة)
 docs/
   SOURCES.md     كل مصدر توثيق رسمي استُخدم فعلياً، مع الرابط

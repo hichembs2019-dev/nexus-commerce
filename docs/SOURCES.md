@@ -118,6 +118,48 @@ at exactly those call sites with a comment pointing here, rather than
 guessing field names that Shopify is known to rename across API versions
 (e.g. `financialStatus` → `displayFinancialStatus` in past version bumps).
 
+### Client credentials access token - verified 2026-10-12
+
+`shopify.Session(shop_url, api_version, access_token)` above needs a real
+`access_token` - the README snippet shows the session API, not how to get
+one. Earlier in this session the plan was a manually-obtained static Admin
+API token (`shpat_...`) from a merchant-install flow, but that flow kept
+dead-ending in this Dev Dashboard app (OAuth redirect needs a real reachable
+callback URL, which this project doesn't have). The owner instead opened
+`shopify.dev`'s own docs directly (blocked from this project's dev session,
+reachable from the owner's device) and used its "Ask assistant" tool, which
+pointed to the actually-correct flow for this project's case, with its own
+source citations:
+
+> This app only works with stores in your own organization (the owner's
+> own store - no merchant-install step needed), so it uses the **Client
+> credentials grant** directly, not the install/OAuth-redirect flow.
+
+```
+POST https://{shop}.myshopify.com/admin/oauth/access_token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&client_id={CLIENT_ID}&client_secret={CLIENT_SECRET}
+```
+
+Response:
+```json
+{"access_token": "f8563253...", "scope": "read_products,write_products,...", "expires_in": 86399}
+```
+
+`expires_in` is ~86399 seconds (~24h) - a short-lived token, not a permanent
+one. `RealShopifyClient` therefore does this exchange itself (caching the
+result per process, like `RealCJClient` already does for its own access
+token) rather than expecting a manually-obtained static token in `.env` -
+`SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` (both from the Dev
+Dashboard's own "Credenziali"/Credentials page, already visible without any
+install step) are the only two Shopify secrets this project now needs.
+Usage, confirmed on the same page: header `X-Shopify-Access-Token:
+<access_token>` on `https://{shop}.myshopify.com/admin/api/{version}/graphql.json`
+- the `ShopifyAPI` package's own `Session`/`activate_session` already send
+this header internally, so no code changes were needed there beyond how the
+token itself is obtained.
+
 ### productCreate - verified 2026-10-11
 
 `shopify.dev` is blocked from this session (see note above), but the owner

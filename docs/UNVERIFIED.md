@@ -48,7 +48,13 @@ what every automated test and every DRY_RUN run actually exercises
 regardless - `RealCJClient` only runs when `DRY_RUN=false` and real CJ
 credentials are set.
 
-## Shopify - now fully verified and implemented
+## Shopify - now fully verified and implemented (including authentication)
+
+Authentication no longer needs a manually-obtained static Admin API token.
+`RealShopifyClient` uses the **Client credentials grant** - verified
+2026-10-12, see `SOURCES.md` "Client credentials access token" - exchanging
+`SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` for a short-lived (~24h)
+access token itself, the same pattern already used for `RealCJClient`.
 
 The `ShopifyAPI` package's own authentication/session/`GraphQL().execute()`
 usage **was** verified (see `SOURCES.md`) and is used for real.

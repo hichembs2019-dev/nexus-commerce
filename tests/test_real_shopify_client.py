@@ -24,10 +24,80 @@ class _FakeGraphQL:
 
 
 def _client(responses: list[dict]) -> tuple[RealShopifyClient, _FakeGraphQL]:
-    client = RealShopifyClient("test-shop.myshopify.com", "faketoken", "2024-07", "USD")
+    client = RealShopifyClient("test-shop.myshopify.com", "fake-client-id", "fake-client-secret", "2024-07", "USD")
+    client._access_token = "faketoken"  # skip the real auth exchange - covered separately below
     fake = _FakeGraphQL(responses)
     client._shopify.GraphQL = lambda: fake
     return client, fake
+
+
+class _FakeAuthResponse:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def test_get_access_token_posts_client_credentials_and_returns_the_access_token(monkeypatch):
+    client = RealShopifyClient("test-shop.myshopify.com", "fake-client-id", "fake-client-secret", "2024-07")
+
+    calls = []
+
+    def fake_post(url, *, headers, data, timeout):
+        calls.append((url, headers, data))
+        return _FakeAuthResponse({"access_token": "real-shopify-token", "scope": "read_products", "expires_in": 86399})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    token = client._get_access_token()
+
+    assert token == "real-shopify-token"
+    assert len(calls) == 1
+    url, headers, data = calls[0]
+    assert url == "https://test-shop.myshopify.com/admin/oauth/access_token"
+    assert headers == {"Content-Type": "application/x-www-form-urlencoded"}
+    assert data == {
+        "grant_type": "client_credentials",
+        "client_id": "fake-client-id",
+        "client_secret": "fake-client-secret",
+    }
+
+
+def test_get_access_token_is_cached_and_not_refetched(monkeypatch):
+    client = RealShopifyClient("test-shop.myshopify.com", "fake-client-id", "fake-client-secret", "2024-07")
+
+    call_count = 0
+
+    def fake_post(url, *, headers, data, timeout):
+        nonlocal call_count
+        call_count += 1
+        return _FakeAuthResponse({"access_token": "tok"})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    client._get_access_token()
+    client._get_access_token()
+
+    assert call_count == 1
+
+
+def test_get_access_token_raises_clearly_on_authentication_failure(monkeypatch):
+    client = RealShopifyClient("test-shop.myshopify.com", "bad-id", "bad-secret", "2024-07")
+
+    def fake_post(url, *, headers, data, timeout):
+        return _FakeAuthResponse({"errors": "invalid_client"})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    with pytest.raises(RuntimeError, match="Shopify authentication failed"):
+        client._get_access_token()
 
 
 def test_create_product_calls_productCreate_then_productVariantsBulkCreate_and_returns_the_product_id():

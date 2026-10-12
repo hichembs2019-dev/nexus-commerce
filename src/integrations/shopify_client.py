@@ -1,9 +1,12 @@
-"""Verified usage: docs/SOURCES.md "Shopify (ShopifyAPI Python package)".
-The session/authentication setup below is real and verified. The actual
-GraphQL query/mutation bodies are NOT verified (docs/UNVERIFIED.md) -
-shopify.dev was unreachable this session - so every data-fetching/mutating
-method on RealShopifyClient raises NotImplementedError rather than guessing
-field names Shopify is known to rename across API versions.
+"""Verified usage: docs/SOURCES.md "Shopify". Authentication uses the
+Client credentials grant (verified 2026-10-12, see docs/SOURCES.md
+"Shopify > Client credentials access token") - the flow Shopify's own docs
+name for "apps that act only on stores in your own organization", which is
+exactly this project's case (a custom app for the owner's own store, no
+merchant-install step). The app exchanges its Client ID + Client Secret for
+a short-lived (~24h) access token itself, the same way RealCJClient
+exchanges its API Key for a CJ access token - no manually-obtained static
+token, no OAuth redirect.
 """
 from __future__ import annotations
 
@@ -188,16 +191,55 @@ class RealShopifyClient(ShopifyClient):
     }
     """
 
-    def __init__(self, shop_url: str, access_token: str, api_version: str, currency_code: str = "USD"):
+    # Verified 2026-10-12 - see docs/SOURCES.md "Shopify > Client
+    # credentials access token". "apps that act only on stores in your own
+    # organization" (this project's exact case) request a token directly
+    # with no merchant-install step.
+    #
+    #   POST https://{shop}.myshopify.com/admin/oauth/access_token
+    #   Content-Type: application/x-www-form-urlencoded
+    #   grant_type=client_credentials&client_id=...&client_secret=...
+    #
+    # Response: {"access_token": "...", "scope": "...", "expires_in": 86399}
+    # - roughly 24h, so this project re-authenticates per process rather
+    # than persisting a token, same as it already does for CJ.
+
+    def __init__(self, shop_url: str, client_id: str, client_secret: str, api_version: str, currency_code: str = "USD"):
         import shopify
 
         self._shopify = shopify
+        self._shop_url = shop_url
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._api_version = api_version
         self._currency_code = currency_code
-        session = shopify.Session(shop_url, api_version, access_token)
-        shopify.ShopifyResource.activate_session(session)
+        self._access_token: str | None = None
+
+    def _get_access_token(self) -> str:
+        if self._access_token is None:
+            import httpx
+
+            response = httpx.post(
+                f"https://{self._shop_url}/admin/oauth/access_token",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": self._client_id,
+                    "client_secret": self._client_secret,
+                },
+                timeout=30,
+            )
+            payload = response.json()
+            if "access_token" not in payload:
+                raise RuntimeError(f"Shopify authentication failed: {payload}")
+            self._access_token = payload["access_token"]
+        return self._access_token
 
     def _execute(self, query: str, variables: dict) -> dict:
         import json
+
+        session = self._shopify.Session(self._shop_url, self._api_version, self._get_access_token())
+        self._shopify.ShopifyResource.activate_session(session)
 
         raw = self._shopify.GraphQL().execute(query=query, variables=variables)
         # shopify.GraphQL().execute()'s return type (str vs already-parsed

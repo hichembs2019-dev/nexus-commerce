@@ -42,9 +42,13 @@ class Settings:
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-5-5"
 
-    # Shopify
+    # Shopify - Client credentials grant (verified 2026-10-12, see
+    # docs/SOURCES.md "Shopify > Client credentials access token"): the app
+    # exchanges its own Client ID + Secret for an access token itself, no
+    # manually-obtained static token.
     shopify_shop_url: str = ""
-    shopify_access_token: str = ""
+    shopify_client_id: str = ""
+    shopify_client_secret: str = ""
     shopify_api_version: str = "2024-07"
     # The store's real currency was never confirmed (see docs/SOURCES.md
     # "productCreate with images") - a simple, overridable default, not a
@@ -75,7 +79,7 @@ class Settings:
 
     @property
     def shopify_configured(self) -> bool:
-        return bool(self.shopify_shop_url and self.shopify_access_token)
+        return bool(self.shopify_shop_url and self.shopify_client_id and self.shopify_client_secret)
 
     @property
     def cj_configured(self) -> bool:
@@ -105,7 +109,8 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         claude_model=_str(os.environ.get("CLAUDE_MODEL"), "claude-sonnet-5-5"),
         shopify_shop_url=os.environ.get("SHOPIFY_SHOP_URL", ""),
-        shopify_access_token=os.environ.get("SHOPIFY_ACCESS_TOKEN", ""),
+        shopify_client_id=os.environ.get("SHOPIFY_CLIENT_ID", ""),
+        shopify_client_secret=os.environ.get("SHOPIFY_CLIENT_SECRET", ""),
         shopify_api_version=_str(os.environ.get("SHOPIFY_API_VERSION"), "2024-07"),
         shopify_currency_code=_str(os.environ.get("SHOPIFY_CURRENCY_CODE"), "USD"),
         cj_api_key=os.environ.get("CJ_API_KEY", ""),

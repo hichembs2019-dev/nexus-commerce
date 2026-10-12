@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.integrations.cj_client import CJProduct, RealCJClient
+from src.integrations.cj_client import CJProduct, RealCJClient, TrackingInfo
 
 
 class _FakeResponse:
@@ -361,3 +361,93 @@ def test_create_order_raises_clearly_on_failure(monkeypatch):
 
     with pytest.raises(RuntimeError, match="CJ order creation failed"):
         client.create_order(product_id="P1", quantity=1, shipping_address={})
+
+
+def test_track_shipment_looks_up_order_detail_then_the_carrier_tracking_info(monkeypatch):
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    calls = []
+
+    def fake_post(url, *, json, headers, timeout):
+        return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+
+    def fake_get(url, *, params, headers, timeout):
+        calls.append((url, params))
+        if url.endswith("/shopping/order/getOrderDetail"):
+            return _FakeResponse(
+                {
+                    "code": 200,
+                    "result": True,
+                    "data": {"orderId": "CJ1", "orderStatus": "SHIPPED", "logisticName": "CJPacket Ordinary", "trackNumber": "CJPKL123"},
+                }
+            )
+        return _FakeResponse(
+            {
+                "code": 200,
+                "result": True,
+                "data": [
+                    {
+                        "trackingNumber": "CJPKL123",
+                        "trackingStatus": "In transit",
+                        "lastMileCarrier": "CJPacket",
+                    }
+                ],
+            }
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    info = client.track_shipment("CJ1")
+
+    assert info == TrackingInfo(status="In transit", tracking_number="CJPKL123", carrier="CJPacket")
+    assert len(calls) == 2
+    assert calls[0][0] == "https://developers.cjdropshipping.com/api2.0/v1/shopping/order/getOrderDetail"
+    assert calls[0][1] == {"orderId": "CJ1"}
+    assert calls[1][0] == "https://developers.cjdropshipping.com/api2.0/v1/logistic/trackInfo"
+    assert calls[1][1] == {"trackNumber": "CJPKL123"}
+
+
+def test_track_shipment_returns_order_status_when_not_yet_shipped_without_calling_trackinfo(monkeypatch):
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json, headers, timeout):
+        return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+
+    calls = []
+
+    def fake_get(url, *, params, headers, timeout):
+        calls.append(url)
+        return _FakeResponse(
+            {"code": 200, "result": True, "data": {"orderId": "CJ1", "orderStatus": "PROCESSING", "logisticName": "CJPacket Ordinary", "trackNumber": None}}
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    info = client.track_shipment("CJ1")
+
+    assert info == TrackingInfo(status="PROCESSING", tracking_number="", carrier="CJPacket Ordinary")
+    assert len(calls) == 1  # never called trackInfo with no tracking number yet
+
+
+def test_track_shipment_raises_clearly_on_order_lookup_failure(monkeypatch):
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json, headers, timeout):
+        return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+
+    def fake_get(url, *, params, headers, timeout):
+        return _FakeResponse({"code": 1600300, "result": False, "message": "order not found"})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    with pytest.raises(RuntimeError, match="CJ order query failed"):
+        client.track_shipment("missing")

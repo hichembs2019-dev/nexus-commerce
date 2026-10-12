@@ -7,51 +7,46 @@ need one of these, it raises `NotImplementedError` with a comment pointing
 back to this file, rather than guessing. See `SOURCES.md` for exactly which
 domains were blocked and why.
 
-## CJ Dropshipping - the data API surface (authentication is now verified)
+## CJ Dropshipping - now fully verified and implemented
 
 `developers.cjdropshipping.com` returned a `403` from this project's own dev
 session's egress proxy (organization policy denial, not a transient failure
 - see `SOURCES.md`). On 2026-10-11 the owner opened it directly from their
-own device, and it loaded - CJ's full official docs site. Authentication, product search, product
-details, shipping cost, and order creation are now verified and implemented
-for real - see `SOURCES.md` "CJ Dropshipping > Authentication" / "Product
-search" / "Product details" / "Shipping cost" / "Create order". Specifically
-still unverified, and therefore not hardcoded anywhere:
+own device, and it loaded - CJ's full official docs site, read page by page
+from there. **Every `CJClient` method is now verified and implemented** -
+authentication, `search_products()`, `get_product()`, `get_shipping_cost()`,
+`create_order()`, and `track_shipment()`. See `SOURCES.md` "CJ Dropshipping"
+for the full exchange and every source citation.
 
-- Shipment-tracking-by-CJ-order-id flow (the verified `logistic/trackInfo`
-  endpoint takes a shipping tracking number, not a CJ order id - how to get
-  from one to the other is still unconfirmed, see `SOURCES.md`)
-- "1.1 Create Order V2" was never opened/compared against V3 directly - V3
-  was chosen because its own page explicitly flags its `cjPayUrl` field as
-  deprecated, the kind of currency signal this project looks for, not
-  because V2 was confirmed inferior.
+"1.1 Create Order V2" was never opened/compared against V3 directly - V3 was
+chosen because its own page explicitly flags its own `cjPayUrl` field as
+deprecated, the kind of currency signal this project looks for, not because
+V2 was confirmed inferior.
 
-`create_order()` carries three explicitly-flagged gaps, documented in full
-in `SOURCES.md` "Create order": `product_id` passed as `vid` (same
-unconfirmed assumption as `get_shipping_cost()`), `shippingProvince` has no
-real source in this project's verified Shopify order data, and
-`orderNumber` is generated locally rather than traced back to the
-originating Shopify order.
+Several residual, explicitly-flagged gaps remain (none are silent guesses -
+each is a documented project-level choice):
 
-`search_products()` has one residual, explicitly-flagged gap: whether
-`GET /product/listV2`'s parameters go as a query string or a JSON body
-wasn't confirmed (the `curl` example was cut off) - the code uses query
-parameters as the standard REST convention, documented as the defensible
-choice, not a certainty. See `SOURCES.md` "Product search".
-
-`get_shipping_cost()` has one residual, explicitly-flagged gap: whether
-`product_id` is interchangeable with the `vid` (variant id) the verified
-`freightCalculate` endpoint actually asks for was never confirmed. See
-`SOURCES.md` "Shipping cost".
+- `search_products()`: whether `GET /product/listV2`'s parameters go as a
+  query string or a JSON body wasn't confirmed (the `curl` example was cut
+  off) - the code uses query parameters as the standard REST convention.
+- `get_shipping_cost()` and `create_order()`: whether `product_id` is
+  interchangeable with the `vid` (variant id) these endpoints actually ask
+  for was never confirmed - both pass `product_id` as `vid` directly.
+- `create_order()`: `shippingProvince` is required by CJ but has no real
+  source in this project's verified Shopify order data (a province-
+  requiring destination will surface this as a clear CJ error, not silently
+  send wrong data); `orderNumber` is generated locally rather than traced
+  back to the originating Shopify order - a follow-up pass should thread
+  that through `CJClient.create_order()`'s signature instead.
 
 `src/integrations/cj_client.py` defines `CJClient` as an abstract interface
 (method names are this project's own domain vocabulary - `search_products`,
 `get_shipping_cost`, `create_order`, `track_shipment` - not CJ's own API
-vocabulary) and `RealCJClient`, whose `__init__`/`_get_access_token()` are
-real (the verified token exchange), but every data method still raises
-`NotImplementedError("CJ Dropshipping API not verified - see
-docs/UNVERIFIED.md")`. `MockCJClient` is fully implemented and is what every
-test and every DRY_RUN run actually exercises.
+vocabulary) and `RealCJClient`, which now has **zero** remaining
+`NotImplementedError`. `MockCJClient` stays fully implemented too and is
+what every automated test and every DRY_RUN run actually exercises
+regardless - `RealCJClient` only runs when `DRY_RUN=false` and real CJ
+credentials are set.
 
 ## Shopify - now fully verified and implemented
 

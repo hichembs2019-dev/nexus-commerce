@@ -48,11 +48,11 @@ class CJClient(ABC):
 
 
 class RealCJClient(CJClient):
-    """Authentication (__init__ / _access_token) is real and verified - see
-    the module docstring. Every data method still raises - see
-    docs/UNVERIFIED.md. Nothing about CJ's product/order/tracking endpoints
-    was confirmed against any reachable source this session, so nothing is
-    guessed here.
+    """Every method is now verified and implemented - see the module
+    docstring and docs/SOURCES.md "CJ Dropshipping" for the full exchange,
+    including every explicitly-flagged assumption (product_id vs variant
+    id, shippingProvince's missing source, orderNumber's local generation -
+    see docs/UNVERIFIED.md).
     """
 
     _UNVERIFIED = "CJ Dropshipping API not verified this session - see docs/UNVERIFIED.md"
@@ -194,7 +194,53 @@ class RealCJClient(CJClient):
         return data["orderId"]
 
     def track_shipment(self, cj_order_id: str) -> TrackingInfo:
-        raise NotImplementedError(self._UNVERIFIED)
+        # Verified 2026-10-12 - see docs/SOURCES.md "CJ Dropshipping >
+        # Track shipment". Two real steps: order detail (for trackNumber,
+        # null until CJ ships it - a normal state, not an error) then the
+        # carrier tracking lookup already verified for logistic/trackInfo.
+        import httpx
+
+        order_response = httpx.get(
+            f"{self._base_url}/shopping/order/getOrderDetail",
+            params={"orderId": cj_order_id},
+            headers={"CJ-Access-Token": self._get_access_token()},
+            timeout=30,
+        )
+        order_payload = order_response.json()
+        if not order_payload.get("result"):
+            raise RuntimeError(f"CJ order query failed: {order_payload.get('message')}")
+
+        order_data = order_payload["data"]
+        track_number = order_data.get("trackNumber")
+        if not track_number:
+            return TrackingInfo(
+                status=order_data.get("orderStatus", ""), tracking_number="", carrier=order_data.get("logisticName", "")
+            )
+
+        tracking_response = httpx.get(
+            f"{self._base_url}/logistic/trackInfo",
+            params={"trackNumber": track_number},
+            headers={"CJ-Access-Token": self._get_access_token()},
+            timeout=30,
+        )
+        tracking_payload = tracking_response.json()
+        if not tracking_payload.get("result"):
+            raise RuntimeError(f"CJ tracking query failed: {tracking_payload.get('message')}")
+
+        entries = tracking_payload["data"]
+        if not entries:
+            return TrackingInfo(
+                status=order_data.get("orderStatus", ""),
+                tracking_number=track_number,
+                carrier=order_data.get("logisticName", ""),
+            )
+
+        entry = entries[0]
+        return TrackingInfo(
+            status=entry.get("trackingStatus", ""),
+            tracking_number=entry.get("trackingNumber", track_number),
+            carrier=entry.get("lastMileCarrier", ""),
+        )
 
 
 class MockCJClient(CJClient):

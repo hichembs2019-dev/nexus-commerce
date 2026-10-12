@@ -711,5 +711,47 @@ same documented CN-origin default as `get_shipping_cost()`, the latter
 directly matching this project's actual platform, both low-risk inclusions
 rather than guesses.
 
-Every other CJ endpoint (`track_shipment`) is still unverified - see
-UNVERIFIED.md.
+### Track shipment (track_shipment) - verified 2026-10-12
+
+This closes the gap `UNVERIFIED.md` had flagged: `logistic/trackInfo`
+(verified earlier, see "6 Logistic") needs a shipping *tracking number*,
+not a CJ *order id*. From CJ's own docs, "5 Shopping > 1 Order > 1.7 Query
+Order (GET)" supplies exactly that link.
+
+```
+GET https://developers.cjdropshipping.com/api2.0/v1/shopping/order/getOrderDetail?orderId=210711000018043276
+CJ-Access-Token: <access token>
+```
+
+Parameter: `orderId` (string, required).
+
+Response (`data`, trimmed to the fields this project reads):
+```json
+{
+  "code": 200, "result": true, "message": "Success",
+  "data": {
+    "orderId": "210823100016290555",
+    "orderStatus": "CREATED",
+    "logisticName": "CJPacket Ordinary",
+    "trackNumber": null,
+    "trackingProvider": "Yun_Standard"
+  }
+}
+```
+
+CJ's own "Order Status" table (same page) documents the lifecycle:
+`CREATED` → `IN_CART` → `UNPAID` → `PENDING`/`PROCESSING` (sub-statuses of
+`UNSHIPPED`) → `SHIPPED` ("in transit, get tracking number") → `DELIVERED`
+/ `CANCELLED`. `trackNumber` is `null` until the order reaches `SHIPPED` -
+confirmed from CJ's own docs, not assumed.
+
+`RealCJClient.track_shipment()` now does this in two real steps:
+1. `GET /shopping/order/getOrderDetail?orderId=<cj_order_id>` to read
+   `trackNumber` (and `orderStatus`/`logisticName` as a fallback when no
+   tracking number exists yet - an order not yet shipped is a normal state,
+   not an error).
+2. If a `trackNumber` exists, `GET /logistic/trackInfo?trackNumber=...`
+   (already verified) for the live carrier status.
+
+Every method on `CJClient` is now verified and implemented. No
+`NotImplementedError` remains in `src/integrations/cj_client.py`.

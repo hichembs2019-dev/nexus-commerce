@@ -24,6 +24,18 @@ def _float(value: str | None, default: float) -> float:
     return float(value)
 
 
+def _str(value: str | None, default: str) -> str:
+    """Like os.environ.get's default, but also falls back when the .env key
+    is present but left blank (e.g. `CJ_API_BASE_URL=`) - a key that exists
+    in the file always wins over the Python default otherwise, even empty.
+    Only for fields with a real non-empty default (base URLs, versions) -
+    pure secrets (API keys/tokens) correctly stay "" when unset.
+    """
+    if value is None or value == "":
+        return default
+    return value
+
+
 @dataclass
 class Settings:
     # Anthropic
@@ -91,13 +103,15 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
 
     return Settings(
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
-        claude_model=os.environ.get("CLAUDE_MODEL", "claude-sonnet-5-5"),
+        claude_model=_str(os.environ.get("CLAUDE_MODEL"), "claude-sonnet-5-5"),
         shopify_shop_url=os.environ.get("SHOPIFY_SHOP_URL", ""),
         shopify_access_token=os.environ.get("SHOPIFY_ACCESS_TOKEN", ""),
-        shopify_api_version=os.environ.get("SHOPIFY_API_VERSION", "2024-07"),
-        shopify_currency_code=os.environ.get("SHOPIFY_CURRENCY_CODE", "USD"),
+        shopify_api_version=_str(os.environ.get("SHOPIFY_API_VERSION"), "2024-07"),
+        shopify_currency_code=_str(os.environ.get("SHOPIFY_CURRENCY_CODE"), "USD"),
         cj_api_key=os.environ.get("CJ_API_KEY", ""),
-        cj_api_base_url=os.environ.get("CJ_API_BASE_URL", "https://developers.cjdropshipping.com/api2.0/v1"),
+        cj_api_base_url=_str(
+            os.environ.get("CJ_API_BASE_URL"), "https://developers.cjdropshipping.com/api2.0/v1"
+        ),
         telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
         max_order_cost=_float(os.environ.get("MAX_ORDER_COST"), 200.0),

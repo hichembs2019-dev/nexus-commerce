@@ -1165,3 +1165,44 @@ cover a real non-zero quote reaching the stored `cost_breakdown`, a quote
 high enough to fail `MIN_MARGIN`, and a failed quote skipping the
 candidate - all three mutation-tested (fail with the real call reverted
 to the old hardcoded `shipping_cost=0`, pass with it restored).
+
+## CJ `pid` ≠ `vid`, and a real 1 QPS throttle - found live 2026-10-13
+
+Once real shipping quotes started firing every minute against real CJ
+candidates, two more real failures showed up in the live log, both
+reproduced directly (not inferred from docs):
+
+1. `POST /logistic/freightCalculate` with a real search-result `id` passed
+   as `vid` returned `{"code":1602000,"result":false,"message":"Variant not
+   found, vid: 1356875251300044800"}` - a real, repeatable rejection, not a
+   transient error.
+2. The same endpoint under the owner's 1-minute cadence also returned a real
+   `429` with `{"code":1600200,"result":false,"message":"Too Many Requests,
+   QPS limit is 1 time/1second"}`.
+
+For (1): `GET /product/query?pid=1356875251300044800` was called with the
+exact same id, live, and its real response carried a `data.variants[]` array
+whose entries' own `vid` (e.g. `1356875251321016320`) is a genuinely
+different value from the `pid` - confirmed by inspecting the full real
+response, not assumed. Re-checked `listV2`'s (search) full, untrimmed field
+list separately and confirmed it has **no** `vid` field at all - the only
+real source for a usable `vid` is `product/query`.
+
+Fix: `RealCJClient._resolve_default_vid(product_id)` calls `product/query`
+and returns `data["variants"][0]["vid"]`; `get_shipping_cost()` and
+`create_order()` both resolve this before building their request body,
+instead of passing the caller's `product_id` straight through as `vid`.
+"First variant" is this project's own simple default - no call site today
+picks a specific size/color, so there is nothing more specific to choose
+from yet (see `docs/UNVERIFIED.md`).
+
+For (2): `RealCJClient._post_with_retry()` retries a `429` response up to 3
+times with a 1.5s delay (matching the confirmed real "1 time/1 second"
+limit) before giving up - the owner's own explicit choice when asked
+("أضف إعادة محاولة لطلب الشحن"), applied to the exact real call that hit it.
+
+Both fixes are mutation-tested in `tests/test_real_cj_client.py`: reverting
+`_resolve_default_vid()` (restoring the old `"vid": product_id`) reproduces
+the real "Variant not found" shape in the new vid-resolution tests, and
+removing the retry reproduces a crash on the real 429 body in the retry
+test; both pass again with the fix restored.

@@ -134,24 +134,76 @@ class RealCJClient(CJClient):
                 )
         return products
 
-    def get_shipping_cost(self, product_id: str, country: str) -> float:
-        # Verified 2026-10-12 - see docs/SOURCES.md "CJ Dropshipping >
-        # Shipping cost". "CN" origin and "first option" are this project's
-        # own simple defaults, not CJ's. product_id is passed as "vid"
-        # (variant id) - unconfirmed assumption, flagged in SOURCES.md.
+    # Found live 2026-10-13: "vid" and "pid" are NOT interchangeable -
+    # docs/UNVERIFIED.md had flagged this as unconfirmed, and it was wrong.
+    # A real product/query response for a real multi-variant product
+    # ("Compatible With , Snap Phone Case", pid 1356875251300044800) carries
+    # data["variants"], each with its own "vid" distinct from "pid" (e.g.
+    # vid 1356875251321016320). Passing pid as vid to freightCalculate
+    # returned a real, live "Variant not found" error - not a guess, a
+    # reproduced failure. This resolves the real default variant's vid
+    # before either call that needs one.
+    def _resolve_default_vid(self, product_id: str) -> str:
         import httpx
 
-        response = httpx.post(
+        response = httpx.get(
+            f"{self._base_url}/product/query",
+            params={"pid": product_id},
+            headers={"CJ-Access-Token": self._get_access_token()},
+            timeout=30,
+        )
+        payload = response.json()
+        if not payload.get("result"):
+            raise RuntimeError(f"CJ product query failed: {payload.get('message')}")
+
+        variants = payload["data"].get("variants") or []
+        if not variants:
+            raise RuntimeError(f"CJ product {product_id} has no variants to order/quote")
+        return variants[0]["vid"]
+
+    # Found live 2026-10-13: CJ's own freightCalculate enforces "QPS limit
+    # is 1 time/1 second" (the real 429 body's own message) - a basic
+    # per-second throttle, not a daily/minute quota, so a short retry
+    # clears it reliably. Owner's explicit instruction: use CJ's real
+    # system as it is, don't invent a workaround - this retries the exact
+    # same real call, nothing more.
+    _MAX_RETRIES = 3
+    _RETRY_DELAY_SECONDS = 1.5
+
+    def _post_with_retry(self, url: str, *, json: dict) -> dict:
+        import time
+
+        import httpx
+
+        last_payload: dict = {}
+        for attempt in range(self._MAX_RETRIES):
+            response = httpx.post(
+                url,
+                json=json,
+                headers={"CJ-Access-Token": self._get_access_token(), "Content-Type": "application/json"},
+                timeout=30,
+            )
+            payload = response.json()
+            if response.status_code != 429:
+                return payload
+            last_payload = payload
+            if attempt < self._MAX_RETRIES - 1:
+                time.sleep(self._RETRY_DELAY_SECONDS)
+        return last_payload
+
+    def get_shipping_cost(self, product_id: str, country: str) -> float:
+        # Verified 2026-10-12, vid fix 2026-10-13 - see docs/SOURCES.md
+        # "CJ Dropshipping > Shipping cost". "CN" origin and "first option"
+        # are this project's own simple defaults, not CJ's.
+        vid = self._resolve_default_vid(product_id)
+        payload = self._post_with_retry(
             f"{self._base_url}/logistic/freightCalculate",
             json={
                 "startCountryCode": "CN",
                 "endCountryCode": country,
-                "products": [{"quantity": 1, "vid": product_id}],
+                "products": [{"quantity": 1, "vid": vid}],
             },
-            headers={"CJ-Access-Token": self._get_access_token(), "Content-Type": "application/json"},
-            timeout=30,
         )
-        payload = response.json()
         if not payload.get("result"):
             raise RuntimeError(f"CJ freight calculation failed: {payload.get('message')}")
 
@@ -181,15 +233,16 @@ class RealCJClient(CJClient):
         return CJProduct(product_id=data["pid"], title=data["productNameEn"], price=_parse_cj_price(data["sellPrice"]))
 
     def create_order(self, *, product_id: str, quantity: int, shipping_address: dict) -> str:
-        # Verified 2026-10-12 - see docs/SOURCES.md "CJ Dropshipping >
-        # Create order" for the three gaps flagged here: product_id passed
-        # as "vid" (unconfirmed), shippingProvince has no real source in
-        # this project's Shopify order data, and orderNumber is generated
-        # locally since this method's signature carries no order reference.
+        # Verified 2026-10-12, vid fix 2026-10-13 - see docs/SOURCES.md
+        # "CJ Dropshipping > Create order". Remaining flagged gaps:
+        # shippingProvince has no real source in this project's Shopify
+        # order data, and orderNumber is generated locally since this
+        # method's signature carries no order reference.
         import uuid
 
         import httpx
 
+        vid = self._resolve_default_vid(product_id)
         order_number = shipping_address.get("order_number") or str(uuid.uuid4())
         payload = {
             "orderNumber": order_number,
@@ -203,7 +256,7 @@ class RealCJClient(CJClient):
             "shippingPhone": shipping_address.get("phone", ""),
             "fromCountryCode": "CN",
             "platform": "shopify",
-            "products": [{"vid": product_id, "quantity": quantity}],
+            "products": [{"vid": vid, "quantity": quantity}],
         }
 
         response = httpx.post(

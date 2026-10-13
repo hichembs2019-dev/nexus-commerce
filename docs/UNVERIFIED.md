@@ -29,9 +29,6 @@ each is a documented project-level choice):
 - `search_products()`: whether `GET /product/listV2`'s parameters go as a
   query string or a JSON body wasn't confirmed (the `curl` example was cut
   off) - the code uses query parameters as the standard REST convention.
-- `get_shipping_cost()` and `create_order()`: whether `product_id` is
-  interchangeable with the `vid` (variant id) these endpoints actually ask
-  for was never confirmed - both pass `product_id` as `vid` directly.
 - `create_order()`: `shippingProvince` is required by CJ but has no real
   source in this project's verified Shopify order data (a province-
   requiring destination will surface this as a clear CJ error, not silently
@@ -47,6 +44,39 @@ vocabulary) and `RealCJClient`, which now has **zero** remaining
 what every automated test and every DRY_RUN run actually exercises
 regardless - `RealCJClient` only runs when `DRY_RUN=false` and real CJ
 credentials are set.
+
+## CJ `pid` vs `vid` - was unconfirmed, now resolved and confirmed NOT the same (2026-10-13)
+
+The gap this file previously flagged ("whether `product_id` is interchangeable
+with the `vid` these endpoints actually ask for was never confirmed") was
+closed live, not by reading docs further but by the real API itself answering:
+
+- Passing a real `listV2` search result's `id` straight through as `vid` to
+  `POST /logistic/freightCalculate` returned a real, live
+  `{"code":1602000,"message":"Variant not found, vid: 1356875251300044800"}`.
+- `GET /product/query?pid=<same id>` returned a real `data.variants[]` array
+  whose entries carry a genuinely different `vid` (e.g.
+  `1356875251321016320`) - confirmed by diffing the full response, not
+  assumed.
+- `listV2` (search) has no `vid` field anywhere in its response at all
+  (confirmed via a full untrimmed field listing) - a real `vid` can only be
+  obtained from `product/query`.
+
+`RealCJClient.get_shipping_cost()` and `create_order()` now call a new
+`_resolve_default_vid()` (itself `product/query`) before using a `vid`,
+instead of passing the caller's `product_id` straight through. This is this
+project's own simple default - the **first** variant returned, not a
+caller-chosen one, since neither current call site threads a specific
+variant selection through. If a future proposal needs to order a specific
+variant (size/color) rather than CJ's first one, that selection needs to be
+added to `new_product_discovery.py`'s payload and threaded through, which has
+not been done.
+
+`freightCalculate` was also separately found live to enforce "QPS limit is 1
+time/1 second" (a real `429` with that exact message under load at the
+owner's chosen 1-minute cadence). `_post_with_retry()` retries that one real,
+reproduced failure up to 3 times with a 1.5s delay - matching the confirmed
+1 QPS limit, not a guessed backoff.
 
 ## Shopify - now fully verified and implemented (including authentication)
 

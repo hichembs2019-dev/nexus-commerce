@@ -14,8 +14,9 @@ from src.integrations.cj_client import CJProduct, RealCJClient, TrackingInfo
 
 
 class _FakeResponse:
-    def __init__(self, payload: dict):
+    def __init__(self, payload: dict, status_code: int = 200):
         self._payload = payload
+        self.status_code = status_code
 
     def json(self) -> dict:
         return self._payload
@@ -322,7 +323,29 @@ def test_get_product_raises_clearly_on_failure(monkeypatch):
         client.get_product("missing")
 
 
-def test_get_shipping_cost_sends_the_country_and_vid_and_returns_the_first_options_price(monkeypatch):
+def _fake_get_with_variants(vid: str):
+    def fake_get(url, *, params, headers, timeout):
+        return _FakeResponse(
+            {
+                "code": 200,
+                "result": True,
+                "data": {
+                    "pid": params["pid"],
+                    "productNameEn": "Phone Case",
+                    "sellPrice": 5.0,
+                    "variants": [{"vid": vid}],
+                },
+            }
+        )
+
+    return fake_get
+
+
+def test_get_shipping_cost_resolves_the_real_vid_from_product_query_not_the_pid(monkeypatch):
+    # Found live 2026-10-13: "pid" (search/listing id) and "vid" (variant
+    # id) are NOT interchangeable - passing a real pid as vid to
+    # freightCalculate returned a real, live "Variant not found" error.
+    # A real vid only comes from product/query's data.variants[].vid.
     client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
 
     def fake_post_auth(url, *, json, headers, timeout):
@@ -348,6 +371,7 @@ def test_get_shipping_cost_sends_the_country_and_vid_and_returns_the_first_optio
     import httpx
 
     monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", _fake_get_with_variants("REAL-VID-999"))
 
     cost = client.get_shipping_cost("P1", "US")
 
@@ -355,8 +379,41 @@ def test_get_shipping_cost_sends_the_country_and_vid_and_returns_the_first_optio
     freight_call = calls[-1]
     url, body, headers = freight_call
     assert url == "https://developers.cjdropshipping.com/api2.0/v1/logistic/freightCalculate"
-    assert body == {"startCountryCode": "CN", "endCountryCode": "US", "products": [{"quantity": 1, "vid": "P1"}]}
+    assert body == {
+        "startCountryCode": "CN",
+        "endCountryCode": "US",
+        "products": [{"quantity": 1, "vid": "REAL-VID-999"}],  # the resolved vid, never the pid "P1"
+    }
     assert headers["CJ-Access-Token"] == "tok"
+
+
+def test_get_shipping_cost_retries_once_on_429_then_succeeds(monkeypatch):
+    # Found live 2026-10-13: CJ's freightCalculate enforces "QPS limit is 1
+    # time/1 second" and returns a real HTTP 429 under load.
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    attempts = {"n": 0}
+
+    def fake_post(url, *, json=None, headers, timeout):
+        if url.endswith("/authentication/getAccessToken"):
+            return _FakeResponse({"result": True, "data": {"accessToken": "tok"}}, 200)
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return _FakeResponse(
+                {"code": 1600200, "result": False, "message": "Too Many Requests, QPS limit is 1 time/1second"}, 429
+            )
+        return _FakeResponse({"code": 200, "result": True, "data": [{"logisticPrice": 4.71}]}, 200)
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", _fake_get_with_variants("REAL-VID-999"))
+    monkeypatch.setattr("time.sleep", lambda *_a, **_k: None)
+
+    cost = client.get_shipping_cost("P1", "US")
+
+    assert cost == 4.71
+    assert attempts["n"] == 2  # first 429, then a real retry - not a crash
 
 
 def test_get_shipping_cost_raises_clearly_when_no_options_are_returned(monkeypatch):
@@ -370,6 +427,7 @@ def test_get_shipping_cost_raises_clearly_when_no_options_are_returned(monkeypat
     import httpx
 
     monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", _fake_get_with_variants("REAL-VID-999"))
 
     with pytest.raises(RuntimeError, match="no shipping options"):
         client.get_shipping_cost("P1", "US")
@@ -386,9 +444,40 @@ def test_get_shipping_cost_raises_clearly_on_failure(monkeypatch):
     import httpx
 
     monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", _fake_get_with_variants("REAL-VID-999"))
 
     with pytest.raises(RuntimeError, match="CJ freight calculation failed"):
         client.get_shipping_cost("P1", "US")
+
+
+def test_create_order_resolves_the_real_vid_from_product_query_not_the_pid(monkeypatch):
+    # Same real bug as freightCalculate: createOrderV3 also takes a real
+    # "vid", never the "pid" passed in by the caller.
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    calls = []
+
+    def fake_post(url, *, json, headers, timeout):
+        if url.endswith("/authentication/getAccessToken"):
+            return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+        calls.append((url, json, headers))
+        return _FakeResponse(
+            {
+                "code": 200,
+                "result": True,
+                "data": {"orderId": "CJ123456", "orderStatus": "CREATED", "interceptOrderReasons": []},
+            }
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", _fake_get_with_variants("REAL-VID-999"))
+
+    order_id = client.create_order(product_id="P1", quantity=2, shipping_address={"name": "Jane Doe"})
+
+    assert order_id == "CJ123456"
+    assert calls[0][1]["products"] == [{"vid": "REAL-VID-999", "quantity": 2}]  # resolved vid, never "P1"
 
 
 def test_create_order_sends_mapped_fields_and_returns_the_cj_order_id(monkeypatch):
@@ -411,6 +500,7 @@ def test_create_order_sends_mapped_fields_and_returns_the_cj_order_id(monkeypatc
     import httpx
 
     monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", _fake_get_with_variants("REAL-VID-999"))
 
     order_id = client.create_order(
         product_id="P1",
@@ -434,7 +524,7 @@ def test_create_order_sends_mapped_fields_and_returns_the_cj_order_id(monkeypatc
     assert body["shippingCity"] == "Springfield"
     assert body["shippingCountryCode"] == "US"
     assert body["shippingProvince"] == "IL"
-    assert body["products"] == [{"vid": "P1", "quantity": 2}]
+    assert body["products"] == [{"vid": "REAL-VID-999", "quantity": 2}]
     assert headers["CJ-Access-Token"] == "tok"
 
 
@@ -455,6 +545,7 @@ def test_create_order_raises_on_intercept_reasons_even_when_result_is_true(monke
     import httpx
 
     monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", _fake_get_with_variants("REAL-VID-999"))
 
     with pytest.raises(RuntimeError, match="CJ order creation intercepted"):
         client.create_order(product_id="P1", quantity=1, shipping_address={})
@@ -471,6 +562,7 @@ def test_create_order_raises_clearly_on_failure(monkeypatch):
     import httpx
 
     monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", _fake_get_with_variants("REAL-VID-999"))
 
     with pytest.raises(RuntimeError, match="CJ order creation failed"):
         client.create_order(product_id="P1", quantity=1, shipping_address={})

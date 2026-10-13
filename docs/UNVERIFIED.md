@@ -66,14 +66,9 @@ id), and `update_tracking()` (`fulfillmentTrackingInfoUpdate`, after looking
 up the fulfillment id). See `SOURCES.md` for the full exchange and every
 source citation.
 
-Two residual, explicitly-flagged gaps remain (neither is a guess - both are
-documented project-level choices):
+One residual, explicitly-flagged gap remains (not a guess - a documented
+project-level choice):
 
-- `update_price()`: whether Shopify's `Money` scalar wants a JSON string or
-  a bare number for `$newPrice` was not independently re-confirmed (the
-  example used a bare number; every other Money field verified this session
-  was a string, and the code follows that pattern for consistency, not
-  certainty). See `SOURCES.md` "Variant price update".
 - `update_tracking()`: `notifyCustomer: true` is this project's own default,
   not something Shopify's docs specified - a tracking update with no
   customer notification defeats the point of adding one. See `SOURCES.md`

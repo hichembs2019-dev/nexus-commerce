@@ -86,9 +86,9 @@ class RealShopifyClient(ShopifyClient):
     # example) - this is a simple, documented, overridable default, not a
     # verified fact about the owner's store.
     _PRODUCT_CREATE = """
-    mutation ProductCreateWithImages($title: String!, $descriptionHtml: String, $media: [CreateMediaInput!]) {
+    mutation ProductCreateWithImages($title: String!, $descriptionHtml: String, $media: [CreateMediaInput!], $metafields: [MetafieldInput!]) {
       productCreate(
-        product: { title: $title, descriptionHtml: $descriptionHtml }
+        product: { title: $title, descriptionHtml: $descriptionHtml, metafields: $metafields }
         media: $media
       ) {
         product { id }
@@ -97,9 +97,40 @@ class RealShopifyClient(ShopifyClient):
     }
     """
 
+    # Verified 2026-10-13 - see docs/SOURCES.md "Product metafield for
+    # cj_product_id". Namespace is this project's own ("nexus_commerce"),
+    # not a Shopify-reserved one - confirmed the "namespace" argument on
+    # both productCreate's MetafieldInput and Product.metafield() is a
+    # plain app-chosen string, not a fixed value.
+    _CJ_PRODUCT_ID_NAMESPACE = "nexus_commerce"
+    _CJ_PRODUCT_ID_KEY = "cj_product_id"
+
+    # Verified 2026-10-13 - see docs/SOURCES.md "Products list query".
+    _LIST_PRODUCTS = """
+    query ListProducts($first: Int = 50) {
+      products(first: $first) {
+        edges {
+          node {
+            id
+            title
+            totalInventory
+            priceRangeV2 { minVariantPrice { amount } }
+            metafield(namespace: "nexus_commerce", key: "cj_product_id") { value }
+          }
+        }
+      }
+    }
+    """
+
+    # Verified 2026-10-13 - see docs/SOURCES.md "productVariantsBulkCreate
+    # strategy". Explicit REMOVE_STANDALONE_VARIANT, not the field's own
+    # DEFAULT, because a live call on API version 2024-07 hit "The variant
+    # 'Default Title' already exists" under DEFAULT - REMOVE_STANDALONE_VARIANT's
+    # own documented behavior ("deletes the existing standalone variant")
+    # is unambiguous across API versions, DEFAULT's evidently is not.
     _PRODUCT_VARIANTS_BULK_CREATE = """
-    mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkCreate(productId: $productId, variants: $variants) {
+    mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!, $strategy: ProductVariantsBulkCreateStrategy) {
+      productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: $strategy) {
         userErrors { field message }
         productVariants { id }
       }
@@ -288,9 +319,24 @@ class RealShopifyClient(ShopifyClient):
         media = [
             {"originalSource": url, "mediaContentType": "IMAGE", "alt": title} for url in images
         ]
+        # cj_product_id is stored as a metafield (see _LIST_PRODUCTS /
+        # get_products() below) - it's this project's own data, not a
+        # native Shopify product field, so it has nowhere else to live.
+        metafields = (
+            [
+                {
+                    "namespace": self._CJ_PRODUCT_ID_NAMESPACE,
+                    "key": self._CJ_PRODUCT_ID_KEY,
+                    "type": "single_line_text_field",
+                    "value": cj_product_id,
+                }
+            ]
+            if cj_product_id
+            else []
+        )
         created = self._execute(
             self._PRODUCT_CREATE,
-            {"title": title, "descriptionHtml": description, "media": media},
+            {"title": title, "descriptionHtml": description, "media": media, "metafields": metafields},
         )["productCreate"]
         if created["userErrors"]:
             raise RuntimeError(f"productCreate failed: {created['userErrors']}")
@@ -300,9 +346,13 @@ class RealShopifyClient(ShopifyClient):
             self._PRODUCT_VARIANTS_BULK_CREATE,
             {
                 "productId": product_id,
-                "variants": [
-                    {"price": {"amount": str(price), "currencyCode": self._currency_code}}
-                ],
+                # ProductVariantsBulkInput.price is the Money SCALAR (a bare
+                # decimal string, e.g. "9.99"), not a {amount, currencyCode}
+                # object - found live on 2026-10-13 when Shopify rejected the
+                # object shape as "invalid money". Verified against
+                # shopify.dev's own Money scalar page, see docs/SOURCES.md.
+                "variants": [{"price": str(price)}],
+                "strategy": "REMOVE_STANDALONE_VARIANT",
             },
         )["productVariantsBulkCreate"]
         if priced["userErrors"]:
@@ -311,7 +361,21 @@ class RealShopifyClient(ShopifyClient):
         return product_id
 
     def get_products(self) -> list[ShopifyProduct]:
-        raise NotImplementedError(self._UNVERIFIED)
+        products = self._execute(self._LIST_PRODUCTS, {"first": 50})["products"]
+        result = []
+        for edge in products["edges"]:
+            node = edge["node"]
+            metafield = node.get("metafield")
+            result.append(
+                ShopifyProduct(
+                    product_id=node["id"],
+                    title=node["title"],
+                    price=float(node["priceRangeV2"]["minVariantPrice"]["amount"]),
+                    inventory=node["totalInventory"],
+                    cj_product_id=metafield["value"] if metafield else "",
+                )
+            )
+        return result
 
     def update_price(self, product_id: str, new_price: float) -> None:
         product = self._execute(self._GET_PRODUCT_FIRST_VARIANT, {"id": product_id})["product"]

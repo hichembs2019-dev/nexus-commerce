@@ -122,7 +122,104 @@ def test_create_product_calls_productCreate_then_productVariantsBulkCreate_and_r
     second_query, second_vars = fake.calls[1]
     assert "productVariantsBulkCreate" in second_query
     assert second_vars["productId"] == "gid://shopify/Product/1"
-    assert second_vars["variants"] == [{"price": {"amount": "19.99", "currencyCode": "USD"}}]
+    # Money is a bare decimal-string scalar, not a {amount, currencyCode}
+    # object - found live on 2026-10-13 ("invalid money" from Shopify).
+    assert second_vars["variants"] == [{"price": "19.99"}]
+    assert second_vars["strategy"] == "REMOVE_STANDALONE_VARIANT"
+
+
+def test_create_product_sends_no_metafields_when_no_cj_product_id_given():
+    client, fake = _client(
+        [
+            {"data": {"productCreate": {"product": {"id": "gid://shopify/Product/1"}, "userErrors": []}}},
+            {"data": {"productVariantsBulkCreate": {"productVariants": [{"id": "gid://shopify/ProductVariant/1"}], "userErrors": []}}},
+        ]
+    )
+
+    client.create_product(title="Widget", description="d", price=19.99, images=[])
+
+    _, first_vars = fake.calls[0]
+    assert first_vars["metafields"] == []
+
+
+def test_create_product_stores_cj_product_id_as_a_metafield():
+    client, fake = _client(
+        [
+            {"data": {"productCreate": {"product": {"id": "gid://shopify/Product/1"}, "userErrors": []}}},
+            {"data": {"productVariantsBulkCreate": {"productVariants": [{"id": "gid://shopify/ProductVariant/1"}], "userErrors": []}}},
+        ]
+    )
+
+    client.create_product(
+        title="Widget", description="d", price=19.99, images=[], cj_product_id="CJ-123"
+    )
+
+    _, first_vars = fake.calls[0]
+    assert first_vars["metafields"] == [
+        {"namespace": "nexus_commerce", "key": "cj_product_id", "type": "single_line_text_field", "value": "CJ-123"}
+    ]
+
+
+def test_get_products_maps_the_real_response_shape_including_the_cj_product_id_metafield():
+    client, fake = _client(
+        [
+            {
+                "data": {
+                    "products": {
+                        "edges": [
+                            {
+                                "node": {
+                                    "id": "gid://shopify/Product/1",
+                                    "title": "Widget",
+                                    "totalInventory": 42,
+                                    "priceRangeV2": {"minVariantPrice": {"amount": "19.99"}},
+                                    "metafield": {"value": "CJ-123"},
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+    )
+
+    products = client.get_products()
+
+    assert len(products) == 1
+    product = products[0]
+    assert product.product_id == "gid://shopify/Product/1"
+    assert product.title == "Widget"
+    assert product.price == 19.99
+    assert product.inventory == 42
+    assert product.cj_product_id == "CJ-123"
+
+
+def test_get_products_defaults_cj_product_id_to_empty_string_when_metafield_is_null():
+    client, fake = _client(
+        [
+            {
+                "data": {
+                    "products": {
+                        "edges": [
+                            {
+                                "node": {
+                                    "id": "gid://shopify/Product/2",
+                                    "title": "No CJ link",
+                                    "totalInventory": 0,
+                                    "priceRangeV2": {"minVariantPrice": {"amount": "5.00"}},
+                                    "metafield": None,
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+    )
+
+    products = client.get_products()
+
+    assert products[0].cj_product_id == ""
 
 
 def test_create_product_raises_on_productCreate_userErrors_without_calling_the_second_mutation():

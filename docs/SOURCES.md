@@ -865,3 +865,76 @@ Regression tests: `test_search_products_parses_a_price_range_sellprice_using_the
 and `test_get_product_parses_a_price_range_sellprice_using_the_high_end` in
 `tests/test_real_cj_client.py` - both mutation-tested (fail with the fix
 reverted to bare `float()`, pass with it restored).
+
+### get_products() - found missing live, verified 2026-10-13
+
+The live hourly cycle (real run, DRY_RUN=false) hit
+`NotImplementedError` from `RealShopifyClient.get_products()` - this
+method was never implemented despite `docs/UNVERIFIED.md` and `README.md`
+both having said "zero `NotImplementedError` remains" after the earlier
+verification pass. That claim was wrong; this live failure is the actual
+proof, not the earlier paraphrase. Fetched shopify.dev's own pages
+directly (network now open) rather than guess the shape:
+- https://shopify.dev/docs/api/admin-graphql/latest/objects/Product.md -
+  `totalInventory` ("The quantity of inventory that's in stock") and
+  `priceRangeV2.minVariantPrice.amount` give inventory/price without a
+  second per-variant query, since every product this project creates has
+  exactly one variant (`create_product()` always calls
+  `productVariantsBulkCreate` with a single variant). `product.metafield(namespace:, key:)`
+  returns `Metafield` (nullable - no `!` in its type, unlike `metafields`
+  which is `MetafieldConnection!`), confirming a product with no such
+  metafield returns `null`, not an error - matches the code's
+  `metafield["value"] if metafield else ""`.
+- https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate.md -
+  the "Create a product and associate metafields" example shows
+  `productCreate(product: {..., metafields: [{namespace, key, type, value}]})`,
+  confirming metafields can be set in the same mutation that creates the
+  product, no second call needed.
+
+**Real gap this closes, not previously flagged anywhere:** `cj_product_id`
+is this project's own data (which CJ product a Shopify listing came from) -
+Shopify has no native field for it. `ShopifyProduct.cj_product_id` existed
+in the dataclass and `MockShopifyClient` faked it in memory, but
+`RealShopifyClient.create_product()` never actually persisted it anywhere
+real, so even a correctly-implemented `get_products()` could never have
+recovered it. Fixed by storing it as a metafield
+(namespace `nexus_commerce`, key `cj_product_id`) at creation time and
+reading it back the same way - see `_CJ_PRODUCT_ID_NAMESPACE`/`_CJ_PRODUCT_ID_KEY`
+and `_LIST_PRODUCTS` in `src/integrations/shopify_client.py`. Without this,
+`price_inventory_review.py`'s `if not product.cj_product_id: continue`
+would have silently skipped every real product, forever - the workflow
+would never visibly fail, it would just never do anything.
+
+### productVariantsBulkCreate strategy - found live, verified 2026-10-13
+
+Live-testing `create_product()` end to end (not just unit tests) on the
+owner's real store surfaced two more real bugs the unit tests, written
+against a hand-constructed fake response, could not have caught:
+
+1. **"invalid money" on the variant price.** The code sent
+   `{"price": {"amount": "9.99", "currencyCode": "USD"}}`. Checked
+   https://shopify.dev/docs/api/admin-graphql/latest/scalars/Money.md
+   directly: `Money` is "a monetary value string without a currency symbol
+   or code" - a bare scalar like `"9.99"`, not an object - and
+   https://shopify.dev/docs/api/admin-graphql/latest/input-objects/ProductVariantsBulkInput.md
+   confirms `price: Money`. Fixed to `{"price": str(price)}`.
+2. **"The variant 'Default Title' already exists."** `productCreate` with
+   no explicit variants auto-creates one default variant; the follow-up
+   `productVariantsBulkCreate` then collided with it. The mutation's own
+   `strategy` argument defaults to `DEFAULT`, whose doc text
+   ("deletes the standalone default variant when it's the only variant")
+   says this shouldn't happen - but it did, live, on API version
+   `2024-07`. Rather than trust the doc text over the live result, switched
+   to the version-unambiguous `REMOVE_STANDALONE_VARIANT` value (see
+   https://shopify.dev/docs/api/admin-graphql/latest/enums/ProductVariantsBulkCreateStrategy.md),
+   whose description is the same behavior stated without "default
+   strategy" qualifications that could vary by API version.
+
+**Full live proof, 2026-10-13:** created a real product
+(`gid://shopify/Product/16145462788430`) on `zjwmtu-wn.myshopify.com` with
+a real price and a real `cj_product_id` metafield, read it back via
+`get_products()` and got an exact match (price, metafield value, title all
+round-tripped correctly), then deleted it via a direct `productDelete`
+mutation to leave the real store clean - this was a one-off manual cleanup
+script, not project code, since `ShopifyClient`'s interface has no
+`delete_product()` (not needed by any workflow).

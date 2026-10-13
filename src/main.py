@@ -28,9 +28,17 @@ def main() -> None:
     scheduler.add_job(
         lambda: run_hourly(app), "interval", minutes=settings.hourly_interval_minutes, id="hourly"
     )
-    scheduler.add_job(lambda: run_daily(app), "cron", hour=0, minute=0, id="daily")
+    # Owner's explicit instruction: everything on the same cadence as the
+    # hourly jobs, not once a day at midnight. New-product discovery is
+    # real API calls (CJ search + a full 5-agent consensus per candidate),
+    # so at a 1-minute interval this will burn through a free reasoning
+    # provider's quota fast - see docs/UNVERIFIED.md "Gemini free tier
+    # reliability".
+    scheduler.add_job(
+        lambda: run_daily(app), "interval", minutes=settings.hourly_interval_minutes, id="daily"
+    )
     scheduler.start()
-    logger.info("nexus-commerce started (DRY_RUN=%s, hourly every %s min)", settings.dry_run, settings.hourly_interval_minutes)
+    logger.info("nexus-commerce started (DRY_RUN=%s, everything every %s min)", settings.dry_run, settings.hourly_interval_minutes)
 
     def on_decision(action: str, proposal_id: int) -> None:
         try:

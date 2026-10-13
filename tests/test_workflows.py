@@ -141,6 +141,30 @@ def test_a_product_with_zero_price_is_skipped(conn, settings, cj, suppliers, web
     assert proposals == []
 
 
+def test_a_web_search_failure_does_not_block_an_otherwise_profitable_proposal(conn, settings, cj, suppliers):
+    # Found live 2026-10-13: the web search provider's own account issue
+    # (Anthropic out of credit) made every real discovery cycle crash
+    # before a single proposal ever reached the agents. Competitor
+    # research is informational only - it must degrade, not block.
+    class _FailingWebSearchTool:
+        def search(self, query):
+            raise RuntimeError("provider account issue")
+
+    cj.catalog.append(CJProduct(product_id="CJ-1", title="Phone Case", price=5.0))
+
+    proposals = discover_new_products(
+        conn,
+        suppliers,
+        _FailingWebSearchTool(),
+        settings,
+        agents=all_approving_agents(),
+        search_queries=["phone"],
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0].status == ProposalStatus.CONSENSUS_REACHED.value
+
+
 def test_discovery_searches_every_registered_supplier_and_tags_the_source(conn, settings, web_search):
     from src.integrations.cj_client import MockCJClient
     from src.integrations.supplier_client import SupplierRegistry

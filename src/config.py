@@ -42,6 +42,12 @@ class Settings:
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-5-5"
 
+    # Gemini - a second, independent reasoning backend (owner's own request:
+    # several free providers working together) - verified 2026-10-13, see
+    # docs/SOURCES.md "Gemini agent reasoning".
+    gemini_api_key: str = ""
+    gemini_model: str = "gemma-4-26b-a4b-it"
+
     # Shopify - Client credentials grant (verified 2026-10-12, see
     # docs/SOURCES.md "Shopify > Client credentials access token"): the app
     # exchanges its own Client ID + Secret for an access token itself, no
@@ -93,6 +99,10 @@ class Settings:
     def anthropic_configured(self) -> bool:
         return bool(self.anthropic_api_key)
 
+    @property
+    def gemini_configured(self) -> bool:
+        return bool(self.gemini_api_key)
+
 
 def load_settings(env_path: str | Path | None = None) -> Settings:
     """Loads .env (if present) then reads os.environ. A missing .env is not
@@ -108,6 +118,8 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
     return Settings(
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         claude_model=_str(os.environ.get("CLAUDE_MODEL"), "claude-sonnet-5-5"),
+        gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),
+        gemini_model=_str(os.environ.get("GEMINI_MODEL"), "gemma-4-26b-a4b-it"),
         shopify_shop_url=os.environ.get("SHOPIFY_SHOP_URL", ""),
         shopify_client_id=os.environ.get("SHOPIFY_CLIENT_ID", ""),
         shopify_client_secret=os.environ.get("SHOPIFY_CLIENT_SECRET", ""),

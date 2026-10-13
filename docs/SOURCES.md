@@ -988,3 +988,74 @@ URLs (JLab, AT&T, soundcore, Skullcandy, SoundGuys, ...). Wired into
 `build_app()` to share the same credential as the 5 agents' own reasoning
 client, falling back to `MockWebSearchTool` under the same
 `anthropic_configured` gate the reasoning clients already use.
+
+## Gemini agent reasoning - verified 2026-10-13
+
+The owner's own request: several free AI providers working together, not
+spending more of the Anthropic balance (out of credit - see the live-proof
+entry above). Installed `google-genai` 2.30.0 and used
+`inspect.signature()` on the real installed SDK rather than guess its
+shape (same discipline as `bootstrap_retries` earlier in this project):
+`genai.Client(api_key=...)` and `client.models.generate_content(model=,
+contents=, config=)` both confirmed directly from the installed package,
+not from the quickstart page's prose alone.
+
+**Model name churn, found live, not from the docs page:**
+- `gemini-2.5-flash` (what `ListModels` returned for this key) -> live
+  `404`: `"This model ... is no longer available to new users. ... use
+  models/gemini-3.8-flash"`.
+- `gemini-3.8-flash` (what Google's own error told us to use, and what
+  https://ai.google.dev/gemini-api/docs/quickstart's own example uses) ->
+  live `503 UNAVAILABLE`, `"currently experiencing high demand"` -
+  reproduced on three separate occasions minutes apart, including a direct
+  re-test after the owner pasted a Gemini-assistant-suggested snippet using
+  the same model - still 503 at that moment. A generic chat answer about
+  "which model is free" is not the same claim as "this specific key can
+  reach this specific model right now"; the live response from Google's
+  own servers is what's authoritative here, not training-data-era general
+  advice.
+- `gemma-4-26b-a4b-it` (an open Gemma model, also listed for this key) ->
+  live `200 OK` with a real reply - the one that actually works for this
+  account right now. Set as `GEMINI_MODEL`'s default in `src/config.py`.
+
+**Two real bugs found only by testing the agent-shaped call, not a bare
+"say OK" call:**
+1. `config=types.GenerateContentConfig(system_instruction=...)` -> live
+   `500 Internal Server Error` on `gemma-4-26b-a4b-it` specifically (not on
+   content without a system prompt). Fixed by folding the system prompt
+   into `contents` instead (`f"{system_prompt}\n\n{user_prompt}"`), which
+   works on both Gemini and Gemma models - no model-family branching
+   needed.
+2. Even past that fix, a live `run_daily()` call showed roughly **half** of
+   real `generateContent` calls to `gemma-4-26b-a4b-it` returning `500
+   Internal Server Error` - transient (the identical request retried
+   plain succeeds). `src/agents/consensus.py`'s `run_consensus()` requires
+   `all(d.vote == "approve" for d in decisions)` - a literal unanimous
+   vote from all 5 agents - so a ~50% per-call failure rate makes a full
+   round very unlikely to ever pass without a retry (confirmed live: a run
+   that produced 10 real candidate proposals reached **zero**
+   `consensus_reached`, all 10 `failed_consensus`). Added a 3-attempt
+   retry with a 2-second delay in `RealGeminiReasoningClient.complete()`.
+3. A longer live run (10 candidates, 1-minute scheduler interval, heavy
+   retry volume) then hit `429 Too Many Requests` near the end - the free
+   tier's own rate limit, a genuinely different condition from the 500s
+   above (quota exhaustion, not server flakiness) - confirmed by `exc.code
+   == 429` on `google.genai.errors.ClientError` (500/503 raise
+   `ServerError` instead; both share the `APIError` base, found via
+   `inspect.getmro()` on the installed package). Given its own, longer
+   retry delay (20s vs. 2s) rather than reusing the transient-error one,
+   and any other `ClientError` (400 bad request, 401/403 auth) is
+   re-raised immediately rather than retried, since those are real bugs,
+   not transient conditions.
+
+**Architectural decision, not a workaround:** `build_app()` does NOT split
+the 5 agents between Anthropic and Gemini when both are configured.
+Because consensus needs all 5 to agree, mixing in a provider that is
+currently broken (Anthropic, out of credit) or rate-limited would mean
+that agent auto-rejects every proposal forever (`_review_with_fallback`
+degrades any exception to a "reject", never a crash) - consensus could
+then never be reached, silently, with no error anywhere. So whichever
+provider is configured runs ALL 5 agents, never a mix of a working and a
+broken one. See the comment above the reasoning-client wiring in
+`src/app.py` for how to re-enable a genuine mix once both providers are
+independently confirmed healthy.

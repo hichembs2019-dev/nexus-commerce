@@ -17,6 +17,7 @@ from .integrations.anthropic_client import (
     AgentReasoningClient,
     MockAgentReasoningClient,
     RealAgentReasoningClient,
+    RealGeminiReasoningClient,
 )
 from .integrations.cj_client import CJClient, MockCJClient, RealCJClient
 from .integrations.shopify_client import MockShopifyClient, RealShopifyClient, ShopifyClient
@@ -73,19 +74,40 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
             logger.warning("TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set - using MockTelegramClient")
         telegram = MockTelegramClient()
 
-    if not force_mocks and settings.anthropic_configured:
+    # consensus.py requires a UNANIMOUS approve from all 5 agents (run_consensus:
+    # `all(d.vote == "approve" ...)`), and any agent whose reasoning call
+    # errors auto-degrades to a permanent "reject" (_review_with_fallback) -
+    # never a crash, but also never a consensus, for as long as that one
+    # agent's provider keeps failing. So mixing a broken provider into the
+    # 5 is not a safe way to "diversify" - found live 2026-10-13 when the
+    # Anthropic account ran out of credit mid-run and every proposal then
+    # failed consensus silently. Gemini (free, verified working live) runs
+    # ALL 5 agents whenever it's configured, not split with Anthropic, so
+    # a real vote can actually complete. See docs/SOURCES.md "Gemini agent
+    # reasoning" for the live proof and how to mix them again once both are
+    # confirmed healthy (change the two zip()'d lists below).
+    if not force_mocks and settings.gemini_configured:
         reasoning_clients: list[AgentReasoningClient] = [
+            RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model) for _ in range(5)
+        ]
+    elif not force_mocks and settings.anthropic_configured:
+        reasoning_clients = [
             RealAgentReasoningClient(settings.anthropic_api_key, settings.claude_model) for _ in range(5)
         ]
-        # Same credential as the 5 agents' own reasoning - no separate
-        # provider/account needed (see docs/SOURCES.md "Web search tool").
+    else:
+        if not force_mocks:
+            logger.warning("Neither GEMINI_API_KEY nor ANTHROPIC_API_KEY set - using MockAgentReasoningClient for all 5 agents")
+        reasoning_clients = [MockAgentReasoningClient() for _ in range(5)]
+    agents = build_five_agents(reasoning_clients)
+
+    if not force_mocks and settings.anthropic_configured:
+        # Web search is still Anthropic-only (see docs/SOURCES.md "Web
+        # search tool") - independent of which provider runs the 5 agents.
         web_search: WebSearchTool = RealWebSearchTool(settings.anthropic_api_key, settings.claude_model)
     else:
         if not force_mocks:
-            logger.warning("ANTHROPIC_API_KEY not set - using MockAgentReasoningClient for all 5 agents")
-        reasoning_clients = [MockAgentReasoningClient() for _ in range(5)]
+            logger.warning("ANTHROPIC_API_KEY not set - using MockWebSearchTool")
         web_search = MockWebSearchTool()
-    agents = build_five_agents(reasoning_clients)
 
     # Only "cj" has any real-path potential today (see docs/UNVERIFIED.md);
     # the registry exists so new_product_discovery.py can search additional

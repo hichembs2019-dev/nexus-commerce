@@ -124,6 +124,22 @@ second, unverified API. `price_inventory_review.py` and `tracking_update.py`
 still assume every tracked order's supplier is "cj" - a known, documented
 scope limit of this pass, not an oversight.
 
+## Gemini free tier reliability (known operational constraint, not a guess)
+
+`RealGeminiReasoningClient` is fully verified and implemented (see
+`docs/SOURCES.md` "Gemini agent reasoning"), with retries for both
+transient `500`s and `429` rate limits. But the free tier's real quota is
+a genuine practical ceiling this project cannot remove: a live run of 10
+real candidate proposals reached **zero** unanimous 5-agent approvals even
+with retries, because `run_consensus()` requires all 5 agents to agree and
+a flaky/rate-limited free model makes a clean unanimous round across 5
+calls (and up to 3 rounds) statistically hard at volume. This is not a bug
+to silently paper over - it is the honest cost of "free." If this keeps
+blocking real consensus in practice, the real fix is either a paid Gemini
+tier, splitting discovery across more, smaller runs, or mixing in a
+second working provider once Anthropic's balance is restored (see the
+comment in `src/app.py` on why they are not mixed today).
+
 ## What this means in practice
 
 - Every DRY_RUN run and every automated test uses mocks for all five external

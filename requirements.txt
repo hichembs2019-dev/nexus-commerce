@@ -3,6 +3,9 @@
 # project's own age - re-pin once this has run against real accounts.
 
 anthropic>=0.40.0
+# Second, independent agent-reasoning backend - see docs/SOURCES.md "Gemini
+# agent reasoning".
+google-genai>=2.30.0
 python-telegram-bot>=21.0
 # Was already present transitively (via python-telegram-bot); pinned
 # directly now that RealCJClient's token exchange calls it itself - see

@@ -37,6 +37,60 @@ class RealAgentReasoningClient(AgentReasoningClient):
         return "".join(block.text for block in message.content if hasattr(block, "text"))
 
 
+class RealGeminiReasoningClient(AgentReasoningClient):
+    """A second, independent reasoning backend - verified 2026-10-13, see
+    docs/SOURCES.md "Gemini agent reasoning". Lets the 5 agents genuinely
+    diversify which model backs each vote (the owner's own request: several
+    free providers working together, not one model talking to itself under
+    five labels), using Google's free-tier API key rather than spending more
+    of the Anthropic balance.
+    """
+
+    def __init__(self, api_key: str, model: str):
+        from google import genai
+
+        self._client = genai.Client(api_key=api_key)
+        self._model = model
+
+    # Found live 2026-10-13 (see docs/SOURCES.md): roughly half of real
+    # calls to gemma-4-26b-a4b-it came back `500 Internal Server Error` -
+    # transient, not a request-shape problem (the same call retried plain
+    # succeeds). consensus.py requires a UNANIMOUS approve from all 5
+    # agents, so a ~50% per-call failure rate makes a full round nearly
+    # impossible to ever pass with no retry. A separate live run then hit
+    # `429 Too Many Requests` (the free tier's own rate limit, not a
+    # transient server fault) - a 500/503 is retried fast since the server
+    # is just flaky, but a 429 needs to actually wait out the quota window,
+    # so it gets its own longer delay rather than reusing the short one.
+    _MAX_RETRIES = 3
+    _RETRY_DELAY_SECONDS = 2
+    _RATE_LIMIT_RETRY_DELAY_SECONDS = 20
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        from google.genai import errors
+
+        # The system_instruction config field 500s on Gemma models (found
+        # live, 2026-10-13 - see docs/SOURCES.md) - folding the system
+        # prompt into contents instead works on both Gemini and Gemma, so
+        # this path makes no model-family assumption.
+        contents = f"{system_prompt}\n\n{user_prompt}"
+        last_error: Exception | None = None
+        for attempt in range(self._MAX_RETRIES):
+            try:
+                response = self._client.models.generate_content(model=self._model, contents=contents)
+                return response.text or ""
+            except (errors.ServerError, errors.ClientError) as exc:
+                is_rate_limit = getattr(exc, "code", None) == 429
+                if not isinstance(exc, errors.ServerError) and not is_rate_limit:
+                    raise  # a non-429 client error (bad request, auth, ...) is not transient
+                last_error = exc
+                if attempt < self._MAX_RETRIES - 1:
+                    import time
+
+                    time.sleep(self._RATE_LIMIT_RETRY_DELAY_SECONDS if is_rate_limit else self._RETRY_DELAY_SECONDS)
+        raise last_error
+
+
 class MockAgentReasoningClient(AgentReasoningClient):
     """Returns scripted replies in order, one per call - lets a test drive
     exactly what each of the 5 agents "says" on each round without any real

@@ -65,7 +65,15 @@ def discover_new_products(
             if margin(breakdown) < settings.min_margin:
                 continue  # not worth even proposing
 
-            competitor_research = web_search.search(f"{candidate.title} price")
+            # Competitor research is informational only - counted in the
+            # justification text, never read by the margin/price decision
+            # above. A search failure (e.g. the provider's own account
+            # issue, found live 2026-10-13) must not block a real,
+            # already-profitable proposal from reaching the agents.
+            try:
+                competitor_research = web_search.search(f"{candidate.title} price")
+            except Exception:  # noqa: BLE001 - see comment above
+                competitor_research = []
 
             proposal = submit_proposal(
                 conn,

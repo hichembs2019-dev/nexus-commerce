@@ -938,3 +938,53 @@ round-tripped correctly), then deleted it via a direct `productDelete`
 mutation to leave the real store clean - this was a one-off manual cleanup
 script, not project code, since `ShopifyClient`'s interface has no
 `delete_product()` (not needed by any workflow).
+
+## Web search tool - verified 2026-10-13
+
+A real live run of `run_daily()` (manual trigger, not waiting for midnight)
+hit `NotImplementedError` from `RealWebSearchTool.search()` - this was the
+actual root cause silently blocking every real new-product-discovery cycle
+from ever reaching the 5 agents, since `new_product_discovery.py` calls
+`web_search.search()` for every candidate that clears `MIN_MARGIN` before
+proposing it. `docs/UNVERIFIED.md` already named this gap honestly; this
+live failure is what it looks like in practice, not a new finding - but it
+is the first proof, since this project's DRY_RUN runs and tests all use
+`MockWebSearchTool` and had no way to surface it.
+
+Picked Claude's own server-side web search tool as the provider -
+`ANTHROPIC_API_KEY` is already configured and verified for the 5 agents'
+reasoning, so no new account or credential is needed. Fetched
+https://docs.claude.com/en/docs/agents-and-tools/tool-use/web-search-tool
+directly:
+
+- Three tool-type versions exist: `web_search_20250305` (basic),
+  `web_search_20260209` (adds dynamic filtering, Claude 4.6+ models),
+  `web_search_20260318` (adds `response_inclusion`). Used
+  `web_search_20260209` - `CLAUDE_MODEL=claude-sonnet-5-5` supports it, and
+  this project needs neither dynamic filtering nor response inclusion
+  control.
+- Tool declaration: `{"type": "web_search_20260209", "name": "web_search", "max_uses": 3}`
+  - `max_uses` caps how many searches one call can run; 3 is this
+    project's own choice (a product/competitor check is a simple query, not
+    multi-entity research), not a documented requirement.
+- Response shape, from the doc's own example: a `web_search_tool_result`
+  content block with `tool_use_id` and a `content` list of
+  `web_search_result` items, each carrying `url`, `title`, `page_age`, and
+  `encrypted_content`. **No snippet/excerpt field exists on the result
+  item itself** - confirmed by reading the doc's field list, not assumed.
+  `cited_text` (up to 150 characters) exists only on citation objects
+  attached to the model's own generated text, not on the raw result. Since
+  `new_product_discovery.py` only counts `competitor_research` results and
+  never reads `.snippet`, `RealWebSearchTool.search()` leaves `snippet=""`
+  rather than inventing content for a field nothing reads.
+- `content` is a *list* on success; on a server-tool error it is a single
+  error object instead (e.g. `{"type": "web_search_tool_result_error", "error_code": "max_uses_exceeded"}`)
+  - `isinstance(content, list)` guards this so one failed search doesn't
+    crash the whole discovery cycle.
+
+**Live proof, 2026-10-13:** `RealWebSearchTool(api_key, model).search("wireless earbuds price")`
+against the real Anthropic API returned 9 real results with real titles and
+URLs (JLab, AT&T, soundcore, Skullcandy, SoundGuys, ...). Wired into
+`build_app()` to share the same credential as the 5 agents' own reasoning
+client, falling back to `MockWebSearchTool` under the same
+`anthropic_configured` gate the reasoning clients already use.

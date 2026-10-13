@@ -73,16 +73,18 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
             logger.warning("TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set - using MockTelegramClient")
         telegram = MockTelegramClient()
 
-    web_search: WebSearchTool = MockWebSearchTool() if force_mocks else RealWebSearchTool()
-
     if not force_mocks and settings.anthropic_configured:
         reasoning_clients: list[AgentReasoningClient] = [
             RealAgentReasoningClient(settings.anthropic_api_key, settings.claude_model) for _ in range(5)
         ]
+        # Same credential as the 5 agents' own reasoning - no separate
+        # provider/account needed (see docs/SOURCES.md "Web search tool").
+        web_search: WebSearchTool = RealWebSearchTool(settings.anthropic_api_key, settings.claude_model)
     else:
         if not force_mocks:
             logger.warning("ANTHROPIC_API_KEY not set - using MockAgentReasoningClient for all 5 agents")
         reasoning_clients = [MockAgentReasoningClient() for _ in range(5)]
+        web_search = MockWebSearchTool()
     agents = build_five_agents(reasoning_clients)
 
     # Only "cj" has any real-path potential today (see docs/UNVERIFIED.md);

@@ -102,14 +102,13 @@ named here rather than silently treated as equivalent to the parts that were
 directly read from source. If this turns out wrong, it will fail loudly (a
 real `TypeError` from a wrong keyword argument), not silently.
 
-## Web search (product/competitor research tool)
+## Web search - now verified and implemented
 
-The spec names this capability but not a provider, and it isn't one of the
-four APIs this project's verification pass covers. `src/tools/web_search.py`
-defines the interface and a fully-working mock; `RealWebSearchTool` raises
-`NotImplementedError` naming this file. Picking a provider (Anthropic's own
-web-search tool-use feature, Bing/Google Custom Search, SerpAPI, ...) is
-real, scoped, remaining work.
+Provider picked: Claude's own server-side web search tool
+(`web_search_20260209`), using the same `ANTHROPIC_API_KEY` already
+configured for the 5 agents - see `docs/SOURCES.md` "Web search tool" for
+the full verification and a live proof. `RealWebSearchTool` has zero
+remaining `NotImplementedError`.
 
 ## Supplier scope (owner's own later instruction widening spec SS1)
 
@@ -127,14 +126,16 @@ scope limit of this pass, not an oversight.
 
 ## What this means in practice
 
-- Every DRY_RUN run and every automated test uses mocks for all four external
-  services (Anthropic included, for tests only - DRY_RUN itself does call the
-  real Anthropic API for agent reasoning, since that part was fully verified
-  and `ANTHROPIC_API_KEY`/`GEMINI_API_KEY` are the project's actual decision-
-  making mechanism, not a side effect DRY_RUN needs to suppress).
-- `RealCJClient` and parts of `RealShopifyClient` will raise
-  `NotImplementedError` if actually called today. This is intentional and
-  documented in `README.md`'s "from DRY_RUN to real" section: finishing those
-  two files, once `shopify.dev` and CJ's docs are reachable (or someone
-  manually provides their current content), is real, scoped, remaining work -
-  not a bug to silently work around.
+- Every DRY_RUN run and every automated test uses mocks for all five external
+  services (Anthropic and the web search tool included, for tests only -
+  DRY_RUN itself does call the real Anthropic API for agent reasoning and
+  web search, since both are fully verified and `ANTHROPIC_API_KEY` is the
+  project's actual decision-making mechanism, not a side effect DRY_RUN
+  needs to suppress).
+- As of 2026-10-13, `RealShopifyClient`, `RealCJClient`, and
+  `RealWebSearchTool` have zero remaining `NotImplementedError` and have all
+  been proven live against real accounts (see `docs/SOURCES.md`'s live-proof
+  entries), not just unit-tested against hand-built fakes. The one remaining
+  documented gap in this whole file is `telegram_client.py`'s proactive
+  `send_message` shape (low-risk, already used in production, flagged above
+  rather than silently treated as equally verified).

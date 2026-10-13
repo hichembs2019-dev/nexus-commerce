@@ -1086,3 +1086,45 @@ provided one (still `[]`, honestly, when it didn't - no fabricated image
 URL). `get_product()`'s response (used for already-listed products, not
 new ones) was not touched - it has no documented image field and nothing
 in this project reads one from it.
+
+## Every scheduled job had been silently failing since the first tick - found live 2026-10-13
+
+Ran the real persistent service (`python -m src.main`, DRY_RUN=false,
+`HOURLY_INTERVAL_MINUTES=1`) for the first time since the Gemini fixes, and
+its own log showed every single scheduled hourly job step failing:
+
+```
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be
+used in that same thread. The object was created in thread id ... and
+this is thread id ...
+```
+
+`db/database.py`'s `connect()` carried a comment claiming "APScheduler jobs
+each get their own [connection]" - that was never true. `build_app()`
+creates exactly one `App` (one `conn`) at service startup, and
+`main.py`'s `lambda: run_hourly(app)` / `lambda: run_daily(app)` close over
+that same `app` for every scheduled firing. `BackgroundScheduler` runs each
+firing on its own worker thread, a different thread than the one that
+created the connection - and `run_hourly()`'s own per-step
+`except Exception: logger.exception(...)` quietly absorbed the error every
+time, so nothing ever visibly crashed; the hourly pipeline had simply never
+worked, since its very first scheduled tick, on any run of this service.
+Fixed with `sqlite3.connect(database_path, check_same_thread=False)` -
+safe here because APScheduler's default executor never runs two instances
+of the same job concurrently and this app never issues overlapping writes
+from different jobs at the same instant, which is the actual condition
+`check_same_thread` exists to guard against.
+`tests/test_database.py` reproduces the exact real exception from a real
+background thread and is mutation-tested (fails with the flag removed,
+passes with it restored).
+
+**Separately, cleaned up real leftover test data found in the same
+session**: `get_products()` on the real store returned two abandoned test
+products (`gid://shopify/Product/16145454235982` and
+`.../16145457611086`, both titled "nexus-commerce TEST - metafield
+verification", both `price=0.0`) from earlier live-verification runs in
+this same work session that were never cleaned up like the first one was -
+deleted via a direct `productDelete` call, same as before. This is what
+caused the `price_inventory_review` step's own real error in the log
+("Product not found: pid:TEST-CJ-PRODUCT-ID-123") - a real CJ 404 for a
+fake test id, not a new bug.

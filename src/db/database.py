@@ -70,10 +70,25 @@ CREATE INDEX IF NOT EXISTS idx_orders_proposal ON orders(proposal_id);
 
 
 def connect(database_path: str | Path) -> sqlite3.Connection:
-    """One connection per caller - sqlite3 connections are not safe to share
-    across threads, and APScheduler jobs each get their own.
+    """`check_same_thread=False` - found live 2026-10-13: the comment this
+    replaced claimed "APScheduler jobs each get their own [connection]",
+    but that was never actually true. `build_app()` creates ONE `App` (one
+    `conn`) at startup, and `main.py` closes over that same `app` for every
+    scheduled job (`lambda: run_hourly(app)`), which `BackgroundScheduler`
+    then runs on its own worker thread - a different thread than the one
+    that created the connection. Without this flag, the very first
+    scheduled run raised `sqlite3.ProgrammingError: SQLite objects created
+    in a thread can only be used in that same thread` and `run_hourly()`'s
+    own per-step try/except quietly swallowed it - every hourly job had
+    been failing, silently, since the service's first scheduled tick.
+    APScheduler's default executor only runs one instance of a given job
+    at a time (no same-job overlap), and this app never issues two writes
+    in the same instant from different jobs, so the one real risk
+    `check_same_thread` guards against - two threads touching the
+    connection simultaneously - doesn't arise in how this app actually
+    schedules work.
     """
-    conn = sqlite3.connect(database_path)
+    conn = sqlite3.connect(database_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn

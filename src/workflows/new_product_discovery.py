@@ -82,7 +82,12 @@ def discover_new_products(
                     "title": candidate.title,
                     "description": f"{candidate.title} - من مورّد {supplier_name}",
                     "price": sale_price,
-                    "images": [],
+                    # Found live 2026-10-13: this was always [], and the 5
+                    # agents correctly rejected a real candidate for it
+                    # ("can't publish without images") - candidate.image_url
+                    # is CJ's real "bigImage" field (docs/SOURCES.md
+                    # "Product search"), not previously wired through.
+                    "images": [candidate.image_url] if candidate.image_url else [],
                     "supplier": supplier_name,
                     "cj_product_id": candidate.product_id,
                     "cost_breakdown": vars(breakdown),

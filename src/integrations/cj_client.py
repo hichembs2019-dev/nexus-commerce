@@ -17,6 +17,12 @@ class CJProduct:
     product_id: str
     title: str
     price: float
+    # "bigImage" in the real listV2 response (docs/SOURCES.md "Product
+    # search") - was documented from the start but never mapped onto this
+    # dataclass, so every real new-product proposal's `images` list stayed
+    # empty. Found live 2026-10-13: the 5 agents correctly rejected a real
+    # candidate for exactly that reason ("can't publish without images").
+    image_url: str = ""
 
 
 @dataclass
@@ -119,7 +125,12 @@ class RealCJClient(CJClient):
         for block in payload["data"]["content"]:
             for item in block.get("productList", []):
                 products.append(
-                    CJProduct(product_id=item["id"], title=item["nameEn"], price=_parse_cj_price(item["sellPrice"]))
+                    CJProduct(
+                        product_id=item["id"],
+                        title=item["nameEn"],
+                        price=_parse_cj_price(item["sellPrice"]),
+                        image_url=item.get("bigImage", ""),
+                    )
                 )
         return products
 

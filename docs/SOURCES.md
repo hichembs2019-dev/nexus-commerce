@@ -1059,3 +1059,30 @@ provider is configured runs ALL 5 agents, never a mix of a working and a
 broken one. See the comment above the reasoning-client wiring in
 `src/app.py` for how to re-enable a genuine mix once both providers are
 independently confirmed healthy.
+
+## Real agent reasoning caught a real data gap - 2026-10-13
+
+A live, single-candidate run through Gemini (the fixes above) finally
+produced real, substantive votes instead of only retry/error noise - and
+the agents correctly REJECTED the candidate, for real business reasons,
+not a bug:
+
+> A2 (round 1): "مصفوفة الصور (images) فارغة، ولا يمكن نشر منتج بدون صور.
+> كما أن سعر البيع (0.28) منخفض جداً وقد يؤدي لخسارة مالية عند احتساب رسوم
+> بوابة الدفع الفعلية."
+> A5 (round 3): "سعر البيع (0.28) منخفض جداً وغير واقعي تجارياً، كما أن
+> تكلفة الشحن المسجلة (0) تجعل حسابات الهامش غير دقيقة ومضللة."
+
+This is the owner's own standing instruction working exactly as intended
+("there must never be a loss") - but it also exposed a real, pre-existing
+bug: `new_product_discovery.py`'s proposal payload always sent `"images":
+[]`, for every candidate, always. The real image URL was available the
+whole time - `bigImage` in CJ's `listV2` response was documented back in
+the original `search_products()` verification (see "Product search"
+above) but never mapped onto `CJProduct`. Added `CJProduct.image_url`,
+mapped from `bigImage` in `search_products()`, and
+`new_product_discovery.py` now sends `[candidate.image_url]` when CJ
+provided one (still `[]`, honestly, when it didn't - no fabricated image
+URL). `get_product()`'s response (used for already-listed products, not
+new ones) was not touched - it has no documented image field and nothing
+in this project reads one from it.

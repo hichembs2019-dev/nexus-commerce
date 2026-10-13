@@ -131,6 +131,31 @@ def test_a_product_clearing_min_margin_is_proposed_for_publishing(conn, settings
     assert proposals[0].status == ProposalStatus.CONSENSUS_REACHED.value
 
 
+def test_a_product_with_a_cj_image_carries_it_into_the_proposal_payload(conn, settings, cj, suppliers, web_search):
+    # Found live 2026-10-13: images stayed [] regardless of CJ's own real
+    # image data, and the 5 agents correctly rejected a real candidate for
+    # exactly that reason ("can't publish without images").
+    cj.catalog.append(
+        CJProduct(product_id="CJ-1", title="Phone Case", price=5.0, image_url="https://example.com/case.jpg")
+    )
+
+    proposals = discover_new_products(
+        conn, suppliers, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
+    )
+
+    assert proposals[0].payload["images"] == ["https://example.com/case.jpg"]
+
+
+def test_a_product_with_no_cj_image_gets_an_empty_images_list(conn, settings, cj, suppliers, web_search):
+    cj.catalog.append(CJProduct(product_id="CJ-1", title="Phone Case", price=5.0))
+
+    proposals = discover_new_products(
+        conn, suppliers, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
+    )
+
+    assert proposals[0].payload["images"] == []
+
+
 def test_a_product_with_zero_price_is_skipped(conn, settings, cj, suppliers, web_search):
     cj.catalog.append(CJProduct(product_id="CJ-1", title="Phone Case", price=0.0))
 

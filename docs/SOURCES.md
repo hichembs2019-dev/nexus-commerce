@@ -1128,3 +1128,40 @@ deleted via a direct `productDelete` call, same as before. This is what
 caused the `price_inventory_review` step's own real error in the log
 ("Product not found: pid:TEST-CJ-PRODUCT-ID-123") - a real CJ 404 for a
 fake test id, not a new bug.
+
+## Shipping cost was never actually computed anywhere - found live 2026-10-13
+
+The real agent votes above also kept flagging the same second concern
+every round: `cost_breakdown`'s `shipping_cost` was `0`. Checked how
+widely this reaches, not just in `new_product_discovery.py`:
+`grep -rl get_shipping_cost src/` showed it used *nowhere* in the real
+business logic - not in discovery, not in `order_fulfillment.py`, not in
+`executor.py`. `get_shipping_cost()` itself was verified and implemented
+from the start (see "Shipping cost" above), but never actually called -
+every margin this project ever calculated was overstated by the real
+shipping cost, silently, system-wide.
+
+Scoped the fix to `new_product_discovery.py`, the one place a sale price
+is ever set (order fulfillment only re-orders what was already published
+at an already-decided price; there is no second pricing decision to fix
+there). A real destination doesn't exist yet at discovery time - no
+customer has bought anything - so `get_shipping_cost()` needs a
+representative one to quote at all. `SHIPPING_ESTIMATE_COUNTRY = "US"` is
+this project's own simple, documented choice (the single largest
+e-commerce destination CJ ships to), the same kind of plain default this
+project already uses elsewhere (`MARKUP_MULTIPLIER`, CN origin in
+`get_shipping_cost()` itself) - not a verified fact about this store's
+actual customers.
+
+**On a failed quote, the candidate is skipped, not assumed free.** This
+project's own standing rule (the owner's own words: a purchase must never
+turn into a loss) means a `$0` fallback on a failed shipping lookup would
+be exactly the kind of optimism that could cause one - so a `RuntimeError`
+from CJ's freight API (no route, service down, anything) now means "can't
+verify this won't be a loss," not "assume it's free." `MockCJClient`'s own
+`get_shipping_cost()` already defaulted unset lookups to `0.0` rather than
+raising, so every existing test's prices were unaffected; three new tests
+cover a real non-zero quote reaching the stored `cost_breakdown`, a quote
+high enough to fail `MIN_MARGIN`, and a failed quote skipping the
+candidate - all three mutation-tested (fail with the real call reverted
+to the old hardcoded `shipping_cost=0`, pass with it restored).

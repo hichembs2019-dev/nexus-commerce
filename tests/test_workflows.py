@@ -131,6 +131,70 @@ def test_a_product_clearing_min_margin_is_proposed_for_publishing(conn, settings
     assert proposals[0].status == ProposalStatus.CONSENSUS_REACHED.value
 
 
+def test_a_real_shipping_quote_is_included_in_the_margin_calculation(conn, settings, cj, suppliers, web_search):
+    # Found live 2026-10-13: shipping_cost was hardcoded to 0 here, the
+    # only place a sale price is ever set, so every published product's
+    # margin was overstated by its real shipping cost.
+    cj.catalog.append(CJProduct(product_id="CJ-1", title="Phone Case", price=5.0))
+    cj.shipping_costs[("CJ-1", "US")] = 1.0
+
+    proposals = discover_new_products(
+        conn, suppliers, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0].payload["cost_breakdown"]["shipping_cost"] == 1.0
+
+
+def test_a_shipping_cost_too_high_for_min_margin_is_skipped(conn, settings, cj, suppliers, web_search):
+    # price=5.0 -> sale_price=10.0 (2x markup); a $4 shipping quote drops
+    # margin to (10 - 5 - 4) / 10 = 10%, below the default 25% MIN_MARGIN.
+    cj.catalog.append(CJProduct(product_id="CJ-1", title="Phone Case", price=5.0))
+    cj.shipping_costs[("CJ-1", "US")] = 4.0
+
+    proposals = discover_new_products(
+        conn, suppliers, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
+    )
+
+    assert proposals == []
+
+
+def test_a_candidate_is_skipped_not_assumed_free_when_the_shipping_quote_fails(
+    conn, settings, cj, suppliers, web_search
+):
+    # This project's own standing rule: never assume a loss-causing cost is
+    # zero just because it couldn't be verified.
+    class _FailingShippingCJClient:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def search_products(self, query):
+            return self._inner.search_products(query)
+
+        def get_shipping_cost(self, product_id, country):
+            raise RuntimeError("CJ freight calculation failed")
+
+        def get_product(self, product_id):
+            return self._inner.get_product(product_id)
+
+        def create_order(self, **kwargs):
+            return self._inner.create_order(**kwargs)
+
+        def track_shipment(self, cj_order_id):
+            return self._inner.track_shipment(cj_order_id)
+
+    from src.integrations.supplier_client import SupplierRegistry
+
+    cj.catalog.append(CJProduct(product_id="CJ-1", title="Phone Case", price=5.0))
+    registry = SupplierRegistry({"cj": _FailingShippingCJClient(cj)})
+
+    proposals = discover_new_products(
+        conn, registry, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
+    )
+
+    assert proposals == []
+
+
 def test_a_product_with_a_cj_image_carries_it_into_the_proposal_payload(conn, settings, cj, suppliers, web_search):
     # Found live 2026-10-13: images stayed [] regardless of CJ's own real
     # image data, and the 5 agents correctly rejected a real candidate for

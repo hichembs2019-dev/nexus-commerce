@@ -34,6 +34,21 @@ from .pipeline import submit_proposal
 # not silently published.
 MARKUP_MULTIPLIER = 2.0
 
+# Found live 2026-10-13: shipping_cost was hardcoded to 0 here (the only
+# place in this whole project that ever set a sale price), so every
+# published product's margin was overstated by its real shipping cost -
+# get_shipping_cost() was verified and implemented from the start but never
+# actually called anywhere. The real customer's destination doesn't exist
+# yet at discovery time, so a representative one is needed to get a real
+# shipping quote at all - "US" is this project's own simple, documented
+# choice (the single largest e-commerce destination CJ ships to), not a
+# verified fact about this store's actual customers. If CJ can't quote
+# shipping for a candidate, the candidate is skipped, never assumed free -
+# this project's own standing rule is that a purchase must never turn into
+# a loss, and a guessed $0 shipping cost is exactly the kind of optimism
+# that could cause one.
+SHIPPING_ESTIMATE_COUNTRY = "US"
+
 
 def _suggest_sale_price(supplier_cost: float) -> float:
     return round(supplier_cost * MARKUP_MULTIPLIER, 2)
@@ -54,11 +69,18 @@ def discover_new_products(
             if candidate.price <= 0:
                 continue
 
+            try:
+                shipping_cost = suppliers.get(supplier_name).get_shipping_cost(
+                    candidate.product_id, SHIPPING_ESTIMATE_COUNTRY
+                )
+            except Exception:  # noqa: BLE001 - no quote means no verified margin
+                continue  # can't confirm this won't be a loss - skip, never assume free
+
             sale_price = _suggest_sale_price(candidate.price)
             breakdown = CostBreakdown(
                 sale_price=sale_price,
                 product_cost=candidate.price,
-                shipping_cost=0,
+                shipping_cost=shipping_cost,
                 shopify_fee=0,
                 payment_processing_fee=0,
             )

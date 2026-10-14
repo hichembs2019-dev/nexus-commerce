@@ -2,57 +2,84 @@ from src.app import App
 from src.db import repository
 from src.db.models import ProposalStatus
 from src.integrations.telegram_client import MockTelegramClient
-from src.scheduler import resend_stuck_consensus_reached_proposals
+from src.scheduler import execute_stuck_consensus_reached_proposals
+
+from .conftest import all_approving_agents
 
 
-def _make_app(conn) -> App:
+def _make_app(conn, settings, executor) -> App:
     telegram = MockTelegramClient()
     return App(
-        settings=None,
+        settings=settings,
         conn=conn,
         shopify=None,
         cj=None,
         suppliers=None,
         telegram=telegram,
         web_search=None,
-        agents=[],
-        executor=None,
+        agents=all_approving_agents(),
+        executor=executor,
     )
 
 
-def _consensus_reached_proposal(conn):
+def _consensus_reached_proposal(conn, action_type="publish_product", payload=None, cost=0):
     proposal = repository.create_proposal(
-        conn, action_type="publish_product", payload={"title": "x"}, justification="t", cost=0, risk="low", proposed_by="test"
+        conn, action_type=action_type, payload=payload or {"title": "x"}, justification="t", cost=cost,
+        risk="low", proposed_by="test",
     )
     repository.update_proposal_status(conn, proposal.id, ProposalStatus.CONSENSUS_REACHED.value)
     return repository.get_proposal(conn, proposal.id)
 
 
-def test_a_proposal_stuck_at_consensus_reached_is_sent_to_telegram_on_the_sweep(conn):
+def test_a_proposal_stuck_at_consensus_reached_executes_autonomously_on_the_sweep(conn, settings, executor):
     # Found live 2026-10-14: a real proposal the agents already agreed on
-    # never reached the owner because the service was restarted before
-    # run_daily()'s own send step (which only sees proposals it just
-    # created) got to it - this is exactly that scenario, reproduced.
+    # never got acted on because the service was restarted before
+    # run_daily()'s own step (which only sees proposals it just created) got
+    # to it - this is exactly that scenario, reproduced. Owner's 2026-10-14
+    # full-autonomy instruction means the sweep now executes it directly
+    # instead of sending it to Telegram for approval.
     proposal = _consensus_reached_proposal(conn)
-    app = _make_app(conn)
+    app = _make_app(conn, settings, executor)
 
-    resent_count = resend_stuck_consensus_reached_proposals(app)
+    executed_count = execute_stuck_consensus_reached_proposals(app)
 
-    assert resent_count == 1
+    assert executed_count == 1
     result = repository.get_proposal(conn, proposal.id)
-    assert result.status == ProposalStatus.AWAITING_TELEGRAM.value
-    assert len(app.telegram.sent) == 1
+    assert result.status == ProposalStatus.EXECUTED.value
+    # publish_product is not the real sale - no Telegram message at all.
+    assert app.telegram.sent == []
+    assert app.telegram.notifications == []
 
 
-def test_a_proposal_not_at_consensus_reached_is_left_untouched(conn):
+def test_a_proposal_not_at_consensus_reached_is_left_untouched(conn, settings, executor):
     proposal = repository.create_proposal(
         conn, action_type="publish_product", payload={"title": "x"}, justification="t", cost=0, risk="low", proposed_by="test"
     )  # default status is pending_review, not consensus_reached
-    app = _make_app(conn)
+    app = _make_app(conn, settings, executor)
 
-    resent_count = resend_stuck_consensus_reached_proposals(app)
+    executed_count = execute_stuck_consensus_reached_proposals(app)
 
-    assert resent_count == 0
+    assert executed_count == 0
     result = repository.get_proposal(conn, proposal.id)
     assert result.status == ProposalStatus.PENDING_REVIEW.value
-    assert len(app.telegram.sent) == 0
+    assert app.telegram.sent == []
+    assert app.telegram.notifications == []
+
+
+def test_a_consensus_reached_cj_order_executing_in_dry_run_sends_no_notification(conn, settings, executor):
+    # DRY_RUN (the test settings fixture's default) means nothing was really
+    # ordered - a notification claiming a real sale happened would be false.
+    assert settings.dry_run is True
+    proposal = _consensus_reached_proposal(
+        conn,
+        action_type="cj_order",
+        payload={"shopify_order_id": "1001", "line_items": [{"cj_product_id": "p1", "quantity": 1}], "shipping_address": {}},
+        cost=10,
+    )
+    app = _make_app(conn, settings, executor)
+
+    execute_stuck_consensus_reached_proposals(app)
+
+    result = repository.get_proposal(conn, proposal.id)
+    assert result.status == ProposalStatus.EXECUTED.value
+    assert app.telegram.notifications == []

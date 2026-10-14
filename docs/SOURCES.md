@@ -1308,3 +1308,88 @@ same thing as mixing Anthropic/Gemini across different agents (documented
 above as unsafe, found live 2026-10-13) - it is one agent's one call
 extending its own retry chain to a second real provider, so every
 agent's own vote is still self-consistent per call.
+
+## Full autonomy, no Telegram approval gate - owner's explicit instruction, 2026-10-14
+
+Owner's own words, verbatim: "كثير من ميساجات في تيليغرام و ممتاز، لكن هذا
+غير كاف و يصبح مقلق و ممل اذا كان من غير بيع... انا اريد الموافقة على البيع
+و بس و تكون عندهم الاستقلالية التامة في الموافقة" (too many Telegram
+messages, I'll just keep tapping approve - where's the sale? I want to
+approve only the sale, full autonomy for everything else), then, after
+further clarification: "الاستقلالية التامة و العامة... لا اقدر ان ابقى خلفهم
+على الموافقة او لا" (full, GENERAL autonomy - not even the sale; I cannot
+stay behind them approving or not) and "يعملون بكل استقلالية، انا ارى
+الارباح و بس" (they work with full autonomy, I just see the results).
+
+So the Telegram approve/reject gate (`AWAITING_TELEGRAM` ->
+`send_for_telegram_approval`/`handle_telegram_decision`) is removed from
+every path a brand-new proposal can take, for every `action_type` including
+`CJ_ORDER` (the real sale) - not narrowed to "approve only the sale" as
+first asked, per the owner's own correction above.
+
+- `src/scheduler.py`'s `_execute_if_consensus_reached()` now calls
+  `workflows/pipeline.py`'s new `execute_autonomously()` directly on a
+  `CONSENSUS_REACHED` proposal - no Telegram round trip at all.
+  `resend_stuck_consensus_reached_proposals()` is renamed
+  `execute_stuck_consensus_reached_proposals()` (same startup-restart
+  safety net, same reasoning, now executing instead of sending).
+- `execute_autonomously()` (`src/workflows/pipeline.py`) and the legacy
+  `handle_telegram_decision()`'s approve path now share one helper,
+  `_execute_and_finalize()`, so EXECUTED/EXECUTION_FAILED, the audit
+  entry, `_link_order_result()`, and `review_execution()` happen
+  identically regardless of how execution was reached.
+- `TelegramClient` gained `send_notification(summary)` (no inline
+  keyboard, just text) - implemented for both `RealTelegramClient`
+  (`bot.send_message` with no `reply_markup`) and `MockTelegramClient`
+  (recorded in a separate `.notifications` list from `.sent`, so a test can
+  tell an approval request from a plain notification apart).
+  `_execute_and_finalize()` calls it exactly once, only when
+  `proposal.action_type == CJ_ORDER` AND the result is a real
+  (`dry_run=False`), successful execution - a DRY_RUN "success" or any
+  other action_type never sends anything, so the owner is not messaged
+  about a sale that did not really happen or about routine housekeeping
+  (`PUBLISH_PRODUCT`/`UPDATE_PRICE`/`UPDATE_TRACKING`) they explicitly said
+  they do not want to see.
+- The message itself (`_format_sale_notification()`) reports only numbers
+  already real and on hand - the Shopify order id and `proposal.cost` (what
+  the customer actually paid) and the executor's own result detail. It
+  deliberately does NOT claim a profit figure: no table in this database
+  stores a per-sale product cost (`docs/UNVERIFIED.md`), and the owner has
+  separately, repeatedly forbidden any invented number ("لا تخمين و لا
+  افتراضيات"). A real per-sale profit line is a legitimate next step
+  (would need price_inventory_review's own `cost_breakdown` persisted
+  against the product and looked up at CJ_ORDER time) but is not yet built,
+  and is not pretended to be here.
+- `send_for_telegram_approval`/`handle_telegram_decision` are kept, not
+  deleted - only so a real message already sent to the owner's Telegram
+  chat with live Approve/Reject buttons *before* this deploy still does
+  something sane if tapped. Nothing new is ever routed through that path
+  again (confirmed by the scheduler/main.py changes above, not by this
+  function being gone).
+- New: `execute_stuck_awaiting_telegram_proposals()` - a one-time startup
+  catch-up (wired into `main.py` alongside the existing
+  `execute_stuck_consensus_reached_proposals()` sweep) for any proposal
+  already sitting at `AWAITING_TELEGRAM` from before this change, that the
+  owner never tapped. Under full autonomy nothing is meant to wait on a
+  human tap, so these execute on the very next restart instead of sitting
+  forever.
+- Mutation-tested (revert -> confirm the exact pre-fix symptom reproduces
+  -> restore -> confirm green), same discipline as every other fix in this
+  project:
+  - Reverting `_execute_if_consensus_reached()` back to
+    `send_for_telegram_approval()` reproduced the exact prior behaviour
+    (`status == "awaiting_telegram"` instead of `"executed"`) in
+    `tests/test_scheduler.py`.
+  - Removing the `action_type == CJ_ORDER and success and not dry_run`
+    guard (always notify) made
+    `test_execute_autonomously_executes_publish_product_with_no_telegram_message_at_all`,
+    `test_execute_autonomously_does_not_notify_on_execution_failure`, and
+    two `test_scheduler.py` tests fail, each showing a real notification
+    string that should never have been sent.
+  - Deleting the `send_notification(...)` call entirely made
+    `test_execute_autonomously_on_a_real_cj_order_sends_a_post_sale_notification`
+    fail (`0 == 1` notifications) - proving the "must notify on a real
+    sale" assertion is not a test that passes no matter what.
+  - Full suite: 149 passed (up from 142 before this change) after every
+    revert/restore cycle above, run directly with
+    `python -m pytest -q`.

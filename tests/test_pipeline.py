@@ -3,6 +3,8 @@ from src.db import repository
 from src.db.models import ActionType, ProposalStatus
 from src.workflows.pipeline import (
     DecisionResult,
+    execute_autonomously,
+    execute_stuck_awaiting_telegram_proposals,
     handle_telegram_decision,
     send_for_telegram_approval,
     submit_proposal,
@@ -168,3 +170,127 @@ def test_handle_telegram_decision_rejects_a_proposal_not_awaiting_telegram(conn,
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+# --- Owner's 2026-10-14 full-autonomy instruction: no approval gate for any
+# action_type, including the real sale - see pipeline.py's module docstring.
+
+
+def test_execute_autonomously_requires_consensus_reached_first(conn, settings, telegram, executor):
+    agents = all_approving_agents()
+    proposal = submit_proposal(
+        conn, action_type=ActionType.CJ_ORDER.value, payload={}, justification="t",
+        cost=1000000.0, risk="low", proposed_by="test", settings=settings, agents=agents,
+    )
+    assert proposal.status == ProposalStatus.AUTO_REJECTED.value
+
+    try:
+        execute_autonomously(conn, proposal, executor, agents, telegram)
+        assert False, "expected ValueError for a non-consensus-reached proposal"
+    except ValueError:
+        pass
+    assert telegram.sent == []
+    assert telegram.notifications == []
+
+
+def test_execute_autonomously_executes_publish_product_with_no_telegram_message_at_all(
+    conn, settings, telegram, executor, shopify
+):
+    agents = all_approving_agents()
+    proposal = submit_proposal(
+        conn, action_type=ActionType.PUBLISH_PRODUCT.value,
+        payload={"title": "x", "description": "d", "price": 9.99},
+        justification="t", cost=0, risk="low", proposed_by="test", settings=settings, agents=agents,
+    )
+    assert proposal.status == ProposalStatus.CONSENSUS_REACHED.value
+
+    result = execute_autonomously(conn, proposal, executor, agents, telegram)
+
+    assert result.proposal.status == ProposalStatus.EXECUTED.value
+    # Not the real sale - no button request AND no plain notification either.
+    assert telegram.sent == []
+    assert telegram.notifications == []
+
+
+def test_execute_autonomously_on_a_real_cj_order_sends_a_post_sale_notification(
+    conn, settings, telegram, executor, cj
+):
+    # dry_run=False so the executor actually calls the (mock) supplier and
+    # the result is a real, non-dry-run success - the one case that must
+    # notify. Without this flip the notification branch is never reached at
+    # all, which is exactly the regression this test guards against.
+    settings.dry_run = False
+    agents = all_approving_agents()
+    proposal = submit_proposal(
+        conn, action_type=ActionType.CJ_ORDER.value,
+        payload={
+            "shopify_order_id": "SHOP-9",
+            "line_items": [{"cj_product_id": "CJ-1", "quantity": 1}],
+            "shipping_address": {"country": "US"},
+        },
+        justification="t", cost=25.0, risk="low", proposed_by="test", settings=settings, agents=agents,
+    )
+    assert proposal.status == ProposalStatus.CONSENSUS_REACHED.value
+
+    result = execute_autonomously(conn, proposal, executor, agents, telegram)
+
+    assert result.proposal.status == ProposalStatus.EXECUTED.value
+    assert cj.orders  # a real (mock) supplier order was actually created
+    assert telegram.sent == []  # no approve/reject buttons
+    assert len(telegram.notifications) == 1
+    assert f"#{proposal.id}" in telegram.notifications[0]
+    assert "SHOP-9" in telegram.notifications[0]
+    assert "25.0" in telegram.notifications[0]
+
+
+def test_execute_autonomously_does_not_notify_on_execution_failure(conn, settings, telegram, executor):
+    settings.dry_run = False
+    agents = all_approving_agents()
+    # No cj_product_id in the line item -> executor._execute_real() raises,
+    # caught by Executor.execute() as {"success": False, ...}.
+    proposal = submit_proposal(
+        conn, action_type=ActionType.CJ_ORDER.value,
+        payload={"shopify_order_id": "SHOP-9", "line_items": [{"quantity": 1}], "shipping_address": {}},
+        justification="t", cost=25.0, risk="low", proposed_by="test", settings=settings, agents=agents,
+    )
+
+    result = execute_autonomously(conn, proposal, executor, agents, telegram)
+
+    assert result.proposal.status == ProposalStatus.EXECUTION_FAILED.value
+    assert telegram.notifications == []
+
+
+def test_execute_stuck_awaiting_telegram_proposals_executes_without_a_tap(
+    conn, settings, telegram, executor
+):
+    # Owner's 2026-10-14 instruction landed with a real proposal already
+    # sitting in Telegram with buttons, never tapped - under full autonomy
+    # it must execute on its own rather than wait forever.
+    agents = all_approving_agents()
+    proposal = submit_proposal(
+        conn, action_type=ActionType.PUBLISH_PRODUCT.value,
+        payload={"title": "x", "description": "d", "price": 9.99},
+        justification="t", cost=0, risk="low", proposed_by="test", settings=settings, agents=agents,
+    )
+    send_for_telegram_approval(conn, proposal, telegram)
+    assert repository.get_proposal(conn, proposal.id).status == ProposalStatus.AWAITING_TELEGRAM.value
+
+    executed_count = execute_stuck_awaiting_telegram_proposals(conn, executor, agents, telegram)
+
+    assert executed_count == 1
+    assert repository.get_proposal(conn, proposal.id).status == ProposalStatus.EXECUTED.value
+
+
+def test_execute_stuck_awaiting_telegram_proposals_ignores_other_statuses(conn, settings, telegram, executor):
+    agents = all_approving_agents()
+    proposal = submit_proposal(
+        conn, action_type=ActionType.PUBLISH_PRODUCT.value,
+        payload={"title": "x", "description": "d", "price": 9.99},
+        justification="t", cost=0, risk="low", proposed_by="test", settings=settings, agents=agents,
+    )
+    # Still at consensus_reached, never sent - must be untouched by the
+    # awaiting_telegram-only catch-up.
+    executed_count = execute_stuck_awaiting_telegram_proposals(conn, executor, agents, telegram)
+
+    assert executed_count == 0
+    assert repository.get_proposal(conn, proposal.id).status == ProposalStatus.CONSENSUS_REACHED.value

@@ -15,6 +15,14 @@ class TelegramClient(ABC):
         message's id.
         """
 
+    @abstractmethod
+    def send_notification(self, summary: str) -> str:
+        """Sends `summary` as a plain message with no buttons - used for the
+        owner's explicit 2026-10-14 instruction: full autonomy, no approval
+        gate at all, only a message AFTER a real sale (CJ_ORDER) has already
+        executed. Returns the sent message's id.
+        """
+
 
 class RealTelegramClient(TelegramClient):
     def __init__(self, bot_token: str, chat_id: str):
@@ -48,6 +56,18 @@ class RealTelegramClient(TelegramClient):
 
         return asyncio.run(_send())
 
+    def send_notification(self, summary: str) -> str:
+        import asyncio
+
+        from telegram import Bot
+
+        async def _send() -> str:
+            bot = Bot(token=self._bot_token)
+            message = await bot.send_message(chat_id=self._chat_id, text=summary)
+            return str(message.message_id)
+
+        return asyncio.run(_send())
+
 
 class MockTelegramClient(TelegramClient):
     """Records every sent request in memory - what every test and every
@@ -56,10 +76,17 @@ class MockTelegramClient(TelegramClient):
 
     def __init__(self):
         self.sent: list[tuple[int, str]] = []
+        self.notifications: list[str] = []
         self._next_message_id = 1
 
     def send_approval_request(self, proposal_id: int, summary: str) -> str:
         self.sent.append((proposal_id, summary))
+        message_id = str(self._next_message_id)
+        self._next_message_id += 1
+        return message_id
+
+    def send_notification(self, summary: str) -> str:
+        self.notifications.append(summary)
         message_id = str(self._next_message_id)
         self._next_message_id += 1
         return message_id

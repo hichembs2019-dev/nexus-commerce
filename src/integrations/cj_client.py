@@ -102,16 +102,39 @@ class RealCJClient(CJClient):
         # Verified 2026-10-11 - see docs/SOURCES.md "CJ Dropshipping >
         # Authentication". CJ caches the token server-side for 24h per
         # account, so re-fetching per client instance is cheap, not wasteful.
+        #
+        # Found live 2026-10-14 on the real production server: authentication
+        # itself can return a real 429 ("Too Many Requests, QPS limit is...")
+        # - every real service restart creates a fresh RealCJClient with
+        # self._access_token = None, and this project has restarted a lot
+        # today. This had no retry at all (unlike freightCalculate's
+        # _post_with_retry), so one rate-limited auth attempt failed the
+        # whole job cycle it was part of, even though the very next minute's
+        # cycle would retry anyway (self._access_token stays None after a
+        # failure) - same real QPS limit, same real fix, just applied here
+        # too instead of waiting out a full extra cycle.
         if self._access_token is None:
             import httpx
 
-            response = httpx.post(
-                f"{self._base_url}/authentication/getAccessToken",
-                json={"apiKey": self._api_key},
-                headers={"Content-Type": "application/json"},
-                timeout=30,
-            )
-            payload = response.json()
+            last_payload: dict = {}
+            for attempt in range(self._MAX_RETRIES):
+                response = httpx.post(
+                    f"{self._base_url}/authentication/getAccessToken",
+                    json={"apiKey": self._api_key},
+                    headers={"Content-Type": "application/json"},
+                    timeout=30,
+                )
+                payload = response.json()
+                if response.status_code != 429:
+                    break
+                last_payload = payload
+                if attempt < self._MAX_RETRIES - 1:
+                    import time
+
+                    time.sleep(self._RETRY_DELAY_SECONDS)
+            else:
+                payload = last_payload
+
             if not payload.get("result"):
                 raise RuntimeError(f"CJ authentication failed: {payload.get('message')}")
             self._access_token = payload["data"]["accessToken"]

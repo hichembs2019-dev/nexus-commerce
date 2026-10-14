@@ -87,6 +87,33 @@ def test_get_access_token_raises_clearly_on_authentication_failure(monkeypatch):
         client._get_access_token()
 
 
+def test_get_access_token_retries_once_on_429_then_succeeds(monkeypatch):
+    # Found live 2026-10-14 on the real production server: authentication
+    # itself can return a real 429 ("Too Many Requests, QPS limit is...")
+    # with no retry, failing the whole job cycle it was part of.
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    attempts = {"n": 0}
+
+    def fake_post(url, *, json, headers, timeout):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return _FakeResponse(
+                {"code": 1600200, "result": False, "message": "Too Many Requests, QPS limit is 1 time/1second"}, 429
+            )
+        return _FakeResponse({"result": True, "data": {"accessToken": "real-token-after-retry"}}, 200)
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr("time.sleep", lambda *_a, **_k: None)
+
+    token = client._get_access_token()
+
+    assert token == "real-token-after-retry"
+    assert attempts["n"] == 2  # first 429, then a real retry - not a crash
+
+
 def test_search_products_sends_the_keyword_and_maps_the_real_response_shape(monkeypatch):
     client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
 

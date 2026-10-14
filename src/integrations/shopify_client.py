@@ -140,6 +140,34 @@ class RealShopifyClient(ShopifyClient):
     }
     """
 
+    # Found live 2026-10-14, same incident as inventoryPolicy above: a
+    # product created via productCreate is NOT automatically published to
+    # any sales channel - Product.onlineStoreUrl stayed null on every real
+    # product this project ever created, confirmed directly against the
+    # live store (see docs/SOURCES.md). publishablePublish(id, input:
+    # [PublicationInput!]!) and its real field names (publicationId,
+    # publishDate) were verified live via GraphQL schema introspection
+    # against the real store, not assumed. The Online Store publication id
+    # is looked up by name rather than hardcoded, since it is a different
+    # real id per store.
+    _LIST_PUBLICATIONS = """
+    query ListPublications($first: Int!) {
+      publications(first: $first) {
+        nodes { id name }
+      }
+    }
+    """
+
+    _PUBLISH_TO_CHANNEL = """
+    mutation PublishableProductPublish($id: ID!, $input: [PublicationInput!]!) {
+      publishablePublish(id: $id, input: $input) {
+        userErrors { field message }
+      }
+    }
+    """
+
+    _ONLINE_STORE_PUBLICATION_NAME = "Online Store"
+
     # Verified 2026-10-11 - see docs/SOURCES.md "Orders list query".
     _LIST_RECENT_ORDERS = """
     query ListRecentOrders($first: Int = 10) {
@@ -253,6 +281,7 @@ class RealShopifyClient(ShopifyClient):
         self._client_secret = client_secret
         self._api_version = api_version
         self._access_token: str | None = None
+        self._online_store_publication_id: str | None = None
 
     def _get_access_token(self) -> str:
         if self._access_token is None:
@@ -399,7 +428,26 @@ class RealShopifyClient(ShopifyClient):
         if priced["userErrors"]:
             raise RuntimeError(f"productVariantsBulkCreate failed: {priced['userErrors']}")
 
+        published = self._execute(
+            self._PUBLISH_TO_CHANNEL,
+            {"id": product_id, "input": [{"publicationId": self._get_online_store_publication_id()}]},
+        )["publishablePublish"]
+        if published["userErrors"]:
+            raise RuntimeError(f"publishablePublish failed: {published['userErrors']}")
+
         return product_id
+
+    def _get_online_store_publication_id(self) -> str:
+        if self._online_store_publication_id is None:
+            publications = self._execute(self._LIST_PUBLICATIONS, {"first": 10})["publications"]["nodes"]
+            match = next((p for p in publications if p["name"] == self._ONLINE_STORE_PUBLICATION_NAME), None)
+            if match is None:
+                raise RuntimeError(
+                    f"no '{self._ONLINE_STORE_PUBLICATION_NAME}' publication found among this store's "
+                    f"sales channels: {publications}"
+                )
+            self._online_store_publication_id = match["id"]
+        return self._online_store_publication_id
 
     def get_products(self) -> list[ShopifyProduct]:
         products = self._execute(self._LIST_PRODUCTS, {"first": 50})["products"]

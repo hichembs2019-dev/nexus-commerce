@@ -100,11 +100,28 @@ def test_get_access_token_raises_clearly_on_authentication_failure(monkeypatch):
         client._get_access_token()
 
 
+_PUBLICATIONS_RESPONSE = {
+    "data": {
+        "publications": {
+            "nodes": [
+                {"id": "gid://shopify/Publication/1", "name": "Online Store"},
+                {"id": "gid://shopify/Publication/2", "name": "Shop"},
+                {"id": "gid://shopify/Publication/3", "name": "Point of Sale"},
+            ]
+        }
+    }
+}
+
+_PUBLISH_OK_RESPONSE = {"data": {"publishablePublish": {"userErrors": []}}}
+
+
 def test_create_product_calls_productCreate_then_productVariantsBulkCreate_and_returns_the_product_id():
     client, fake = _client(
         [
             {"data": {"productCreate": {"product": {"id": "gid://shopify/Product/1"}, "userErrors": []}}},
             {"data": {"productVariantsBulkCreate": {"productVariants": [{"id": "gid://shopify/ProductVariant/1"}], "userErrors": []}}},
+            _PUBLICATIONS_RESPONSE,
+            _PUBLISH_OK_RESPONSE,
         ]
     )
 
@@ -113,7 +130,7 @@ def test_create_product_calls_productCreate_then_productVariantsBulkCreate_and_r
     )
 
     assert product_id == "gid://shopify/Product/1"
-    assert len(fake.calls) == 2
+    assert len(fake.calls) == 4
     first_query, first_vars = fake.calls[0]
     assert "productCreate" in first_query
     assert first_vars["title"] == "Widget"
@@ -130,12 +147,23 @@ def test_create_product_calls_productCreate_then_productVariantsBulkCreate_and_r
     assert second_vars["variants"] == [{"price": "19.99", "inventoryPolicy": "CONTINUE"}]
     assert second_vars["strategy"] == "REMOVE_STANDALONE_VARIANT"
 
+    # Found live 2026-10-14, same incident: a created product was never
+    # published to any sales channel either - onlineStoreUrl stayed null
+    # on every real product this project ever created.
+    third_query, third_vars = fake.calls[2]
+    assert "publications" in third_query
+    fourth_query, fourth_vars = fake.calls[3]
+    assert "publishablePublish" in fourth_query
+    assert fourth_vars == {"id": "gid://shopify/Product/1", "input": [{"publicationId": "gid://shopify/Publication/1"}]}
+
 
 def test_create_product_sends_no_metafields_when_no_cj_product_id_given():
     client, fake = _client(
         [
             {"data": {"productCreate": {"product": {"id": "gid://shopify/Product/1"}, "userErrors": []}}},
             {"data": {"productVariantsBulkCreate": {"productVariants": [{"id": "gid://shopify/ProductVariant/1"}], "userErrors": []}}},
+            _PUBLICATIONS_RESPONSE,
+            _PUBLISH_OK_RESPONSE,
         ]
     )
 
@@ -150,6 +178,8 @@ def test_create_product_stores_cj_product_id_as_a_metafield():
         [
             {"data": {"productCreate": {"product": {"id": "gid://shopify/Product/1"}, "userErrors": []}}},
             {"data": {"productVariantsBulkCreate": {"productVariants": [{"id": "gid://shopify/ProductVariant/1"}], "userErrors": []}}},
+            _PUBLICATIONS_RESPONSE,
+            _PUBLISH_OK_RESPONSE,
         ]
     )
 
@@ -161,6 +191,53 @@ def test_create_product_stores_cj_product_id_as_a_metafield():
     assert first_vars["metafields"] == [
         {"namespace": "nexus_commerce", "key": "cj_product_id", "type": "single_line_text_field", "value": "CJ-123"}
     ]
+
+
+def test_create_product_raises_on_publishablePublish_userErrors():
+    client, fake = _client(
+        [
+            {"data": {"productCreate": {"product": {"id": "gid://shopify/Product/1"}, "userErrors": []}}},
+            {"data": {"productVariantsBulkCreate": {"productVariants": [{"id": "gid://shopify/ProductVariant/1"}], "userErrors": []}}},
+            _PUBLICATIONS_RESPONSE,
+            {"data": {"publishablePublish": {"userErrors": [{"field": ["id"], "message": "already published"}]}}},
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="publishablePublish failed"):
+        client.create_product(title="Widget", description="d", price=19.99, images=[])
+
+
+def test_create_product_raises_clearly_when_the_store_has_no_online_store_channel():
+    client, fake = _client(
+        [
+            {"data": {"productCreate": {"product": {"id": "gid://shopify/Product/1"}, "userErrors": []}}},
+            {"data": {"productVariantsBulkCreate": {"productVariants": [{"id": "gid://shopify/ProductVariant/1"}], "userErrors": []}}},
+            {"data": {"publications": {"nodes": [{"id": "gid://shopify/Publication/2", "name": "Shop"}]}}},
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="no 'Online Store' publication found"):
+        client.create_product(title="Widget", description="d", price=19.99, images=[])
+
+
+def test_the_online_store_publication_id_is_looked_up_once_and_cached_across_calls():
+    client, fake = _client(
+        [
+            {"data": {"productCreate": {"product": {"id": "gid://shopify/Product/1"}, "userErrors": []}}},
+            {"data": {"productVariantsBulkCreate": {"productVariants": [{"id": "gid://shopify/ProductVariant/1"}], "userErrors": []}}},
+            _PUBLICATIONS_RESPONSE,
+            _PUBLISH_OK_RESPONSE,
+            {"data": {"productCreate": {"product": {"id": "gid://shopify/Product/2"}, "userErrors": []}}},
+            {"data": {"productVariantsBulkCreate": {"productVariants": [{"id": "gid://shopify/ProductVariant/2"}], "userErrors": []}}},
+            _PUBLISH_OK_RESPONSE,
+        ]
+    )
+
+    client.create_product(title="Widget 1", description="d", price=19.99, images=[])
+    client.create_product(title="Widget 2", description="d", price=29.99, images=[])
+
+    publication_queries = [c for c in fake.calls if "publications" in c[0]]
+    assert len(publication_queries) == 1
 
 
 def test_get_products_maps_the_real_response_shape_including_the_cj_product_id_metafield():

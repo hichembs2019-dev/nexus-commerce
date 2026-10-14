@@ -1522,3 +1522,54 @@ Admin before this half of the fix can be verified or coded.)
   fail on exactly the missing field, then restored to green.
 - Full suite: 143 passed after this fix (no test count change - one
   existing test's assertion was extended, not added/removed).
+
+## The publications-scope blocker, closed end to end - 2026-10-14
+
+The owner added `read_publications`/`write_publications` to the custom
+app's scopes themselves, live, through the new Dev Dashboard (Impostazioni
+→ App → Sviluppo app → Versioni → Crea versione, adding the two scopes to
+the `Ambiti` field, then releasing the version AND separately approving the
+new permissions on the already-installed app via Impostazioni → App →
+nexus-commerce → "Aggiorna"). Confirmed live, not assumed: a
+`currentAppInstallation { accessScopes { handle } } }` query returned only
+the original six scopes right after the version was released, and only
+included `read_publications`/`write_publications` after the separate
+"Aggiorna" approval step - releasing an app version does not itself grant
+new scopes to an existing install.
+
+- Verified `publishablePublish(id: ID!, input: [PublicationInput!]!)` and
+  `PublicationInput`'s real fields (`publicationId`, `publishDate`) via
+  live GraphQL schema introspection against the real store
+  (`__schema.mutationType.fields`, `__type(name: "PublicationInput")`),
+  not assumed from training data - the obvious guess
+  (`PublishablePublishInput`) does not exist as a named type at all.
+- Looked up the real "Online Store" publication id live
+  (`{ publications(first: 10) { nodes { id name } } }`) rather than
+  hardcoding a store-specific id, then used it to publish all 6 already-
+  existing real products directly against the live API (0 userErrors on
+  all 6) - necessary in addition to the code fix below, same reasoning as
+  the inventoryPolicy fix above.
+- `RealShopifyClient.create_product()` now calls `publishablePublish`
+  after creating and pricing every future product, publishing it to the
+  "Online Store" channel the same way. The publication id is looked up
+  once and cached on the client instance (`_online_store_publication_id`)
+  rather than re-queried on every product. Raises clearly, never silently
+  skips, if the store has no "Online Store" publication at all or if
+  `publishablePublish` itself returns `userErrors`.
+- Even after both fixes, `Product.onlineStoreUrl` was STILL `null` on a
+  live re-check - found the real reason by fetching the public storefront
+  URL directly: the store itself was password-protected, a store-wide
+  "Opening soon" lock completely unrelated to either fix above and not
+  fixable from this codebase at all (it is a store setting, not an API
+  call this app has any reason to make). The owner launched the store
+  themselves (Negozio online → "Lancia il negozio"). Verified end to end
+  with a live, cache-busted fetch of the real product page afterward:
+  real title, real price, a working "Aggiungi al carrello" button - a
+  genuinely purchasable product, not just a correct API response.
+- Mutation-tested: removing the `publishablePublish` call entirely made
+  four tests fail, including a `KeyError: 'productCreate'` from the second
+  `create_product()` call in the caching test reusing a response list that
+  no longer matched the call sequence - a concrete demonstration that the
+  call sequence itself, not just a field value, is what the tests pin down.
+- Full suite: 146 passed (up from 143 - four new tests, one pre-existing
+  test extended with two more assertions on the new calls).

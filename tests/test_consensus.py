@@ -212,3 +212,40 @@ def test_an_unparseable_agent_reply_is_treated_as_a_reject_not_a_crash_or_silent
     assert a5_round1_vote.vote == "reject"
     assert result.status == ProposalStatus.CONSENSUS_REACHED.value
     assert result.round == 2
+
+
+# --- real failure found live 2026-10-14: proposal #24's agent wrapped its
+# amendment in the proposal's own envelope shape (action_type/payload/
+# justification/cost/risk) instead of the flat product fields; the
+# corrupted payload survived to a real execution attempt and crashed with
+# `execution error: 'title'` (KeyError). ---
+
+def test_an_amendment_wrapped_in_the_proposal_envelope_is_unwrapped_not_propagated(conn):
+    proposal = _make_proposal(conn)
+    real_fields = {"title": "Slim Magnetic Card Holder", "price": 49.99}
+    envelope_shaped_amendment = {
+        "action_type": "publish_product",
+        "payload": real_fields,
+        "justification": "updated description and title",
+        "cost": 0.0,
+        "risk": "medium",
+    }
+    # 0 approvals in round 1 (below MIN_APPROVALS) so the amendment is
+    # actually picked up as round 2's candidate payload.
+    agents = _agents(
+        [
+            [_reject("no"), _approve()],
+            [_amend(envelope_shaped_amendment), _approve()],
+            [_reject("no"), _reject("no")],
+            [_reject("no"), _reject("no")],
+            [_reject("no"), _reject("no")],
+        ]
+    )
+
+    result = run_consensus(conn, proposal, agents)
+
+    assert result.status == ProposalStatus.CONSENSUS_REACHED.value
+    # The real product fields, not the envelope wrapper - this is exactly
+    # what src/workflows/executor.py reads payload["title"] from.
+    assert result.payload == real_fields
+    assert "title" in result.payload  # would KeyError downstream if missing

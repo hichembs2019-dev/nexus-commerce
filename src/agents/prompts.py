@@ -50,7 +50,12 @@ Shopify، مورّده الوحيد CJ Dropshipping. لا يوجد قائد ول
 - "reject": ترفضه، مع ذكر السبب في "reason". اترك amended_payload = null.
 - "amend": توافق من حيث المبدأ لكن تقترح تعديلاً على المعطيات - ضع \
   النسخة المعدّلة كاملة في "amended_payload" (ليس فرقًا جزئيًا، بل الكائن \
-  الكامل بعد التعديل).
+  الكامل بعد التعديل). **"amended_payload" يحتوي فقط على مفاتيح "payload" \
+  الداخلية المعروضة عليك أدناه (title، description، price، إلخ) - أبداً لا \
+  "action_type" ولا "justification" ولا "cost" ولا "risk" ولا مفتاح \
+  "payload" آخر متداخل بداخله.** مثال خاطئ تمامًا:
+  `"amended_payload": {"action_type": "...", "payload": {"title": "..."}}`.
+  مثال صحيح: `"amended_payload": {"title": "...", "description": "...", ...}`.
 
 القرار يُحسم بموافقة كليكما معًا. هذا لا يعني التساهل: صوّت بصدق كما لو أن \
 رأيك هو الفيصل، فقد يكون كذلك فعلاً. أي amend أو reject يفتح جولة نقاش \

@@ -90,7 +90,11 @@ def run_consensus(conn: sqlite3.Connection, proposal: Proposal, agents: list[Age
             )
             return repository.get_proposal(conn, proposal.id)
 
-        amendments = [d.amended_payload for d in decisions if d.vote == "amend" and d.amended_payload]
+        amendments = [
+            _unwrap_if_envelope_shaped(conn, proposal.id, round_number, d.amended_payload)
+            for d in decisions
+            if d.vote == "amend" and d.amended_payload
+        ]
         if amendments:
             current_payload = amendments[0]  # see module doc point 1
 
@@ -102,6 +106,39 @@ def run_consensus(conn: sqlite3.Connection, proposal: Proposal, agents: list[Age
         details={"proposal_id": proposal.id, "rounds": MAX_ROUNDS},
     )
     return repository.get_proposal(conn, proposal.id)
+
+
+_ENVELOPE_KEYS = {"action_type", "justification", "cost", "risk"}
+
+
+def _unwrap_if_envelope_shaped(conn: sqlite3.Connection, proposal_id: int, round_number: int, amended_payload: dict) -> dict:
+    """An agent's amended_payload must be the flat product/order fields
+    only - never the proposal's own envelope (action_type/payload/
+    justification/cost/risk) that _summarize_proposal() shows the agent for
+    context. Found live 2026-10-14: a real agent (A2, proposal #24, round 1)
+    wrapped its amendment in exactly that envelope shape; the next round's
+    peer review then saw an already-wrapped payload with nothing flat to
+    anchor on, and both agents repeated the same mistake; round 3 approved
+    it literally, and it was sent all the way to a real Shopify publish
+    attempt, which failed with a real `execution error: 'title'` (a
+    KeyError - the code looks for payload["title"], which only existed one
+    level deeper, under payload["payload"]["title"]).
+
+    If the amendment carries a nested "payload" dict alongside envelope
+    keys, that inner dict is the real, intended amendment - unwrap it
+    rather than silently propagate the wrapped shape into a 3rd round and
+    then into execution. This is logged (never silent), since repairing
+    malformed agent output is itself a signal the prompt needs attention.
+    """
+    if isinstance(amended_payload.get("payload"), dict) and _ENVELOPE_KEYS & amended_payload.keys():
+        repository.audit(
+            conn,
+            actor="consensus_engine",
+            action="amendment_envelope_unwrapped",
+            details={"proposal_id": proposal_id, "round": round_number},
+        )
+        return amended_payload["payload"]
+    return amended_payload
 
 
 def _review_with_fallback(agent: Agent, proposal: Proposal, prior_votes):

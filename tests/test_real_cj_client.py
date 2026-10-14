@@ -305,6 +305,36 @@ def test_get_product_parses_a_price_range_sellprice_using_the_high_end(monkeypat
     assert product == CJProduct(product_id="P1", title="Multi-variant hoodie", price=7.21)
 
 
+def test_get_product_parses_a_single_dash_no_spaces_price_range_too(monkeypatch):
+    # Found live 2026-10-14 on the real production server: CJ's range
+    # separator isn't always "--" with spaces - this one real response was
+    # "12.67-22.83" (one dash, no spaces), which crashed with
+    # `ValueError: could not convert string to float: '12.67-22.83'` every
+    # hourly price-review cycle.
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json, headers, timeout):
+        return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+
+    def fake_get(url, *, params, headers, timeout):
+        return _FakeResponse(
+            {
+                "code": 200,
+                "result": True,
+                "data": {"pid": "P1", "productNameEn": "Multi-variant hoodie", "sellPrice": "12.67-22.83"},
+            }
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    product = client.get_product("P1")
+
+    assert product == CJProduct(product_id="P1", title="Multi-variant hoodie", price=22.83)
+
+
 def test_get_product_raises_clearly_on_failure(monkeypatch):
     client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
 

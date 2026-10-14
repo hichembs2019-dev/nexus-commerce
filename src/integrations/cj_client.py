@@ -55,19 +55,31 @@ class CJClient(ABC):
 
 def _parse_cj_price(raw: str | float | int) -> float:
     """CJ's "sellPrice" comes back as a plain number in some responses
-    (confirmed live via get_product) but as a "low -- high" range STRING
-    (e.g. "2.13 -- 7.21") in others, for a product with several variants at
-    different prices - found live on 2026-10-12 when a real search crashed
-    on `float("2.13 -- 7.21")`. A range takes the HIGH end: this value feeds
-    margin checks, and the owner's own standing instruction is that a
-    purchase must never turn into a loss - so cost estimates must never be
-    optimistic. The exact per-variant price is looked up for real before any
-    order is placed (get_shipping_cost / create_order take a specific
-    product_id, not this aggregate figure).
+    (confirmed live via get_product) but as a "low..high" range STRING in
+    others, for a product with several variants at different prices. Found
+    live on 2026-10-12: a double-dash-with-spaces range, "2.13 -- 7.21",
+    crashed on `float(...)`. Found live again on 2026-10-14, on the real
+    production server: a SINGLE-dash, no-spaces range, "12.67-22.83" - the
+    fix for the first shape didn't match this one at all (no "--" substring
+    present), so it fell straight through to `float(raw)` and crashed the
+    same way, repeating every hourly price-review cycle. CJ's real range
+    separator is evidently not fixed-format, so this splits on *any* run of
+    one or more "-" characters (with optional surrounding spaces) rather
+    than a specific literal.
+
+    A range takes the HIGH end: this value feeds margin checks, and the
+    owner's own standing instruction is that a purchase must never turn
+    into a loss - so cost estimates must never be optimistic. The exact
+    per-variant price is looked up for real before any order is placed
+    (get_shipping_cost / create_order take a specific product_id, not this
+    aggregate figure).
     """
-    if isinstance(raw, str) and "--" in raw:
-        _, high = raw.split("--")
-        return float(high.strip())
+    if isinstance(raw, str):
+        import re
+
+        parts = re.split(r"-+", raw.strip())
+        if len(parts) > 1:
+            return float(parts[-1].strip())
     return float(raw)
 
 

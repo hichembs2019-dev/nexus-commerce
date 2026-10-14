@@ -381,7 +381,18 @@ class RealShopifyClient(ShopifyClient):
                 # object - found live on 2026-10-13 when Shopify rejected the
                 # object shape as "invalid money". Verified against
                 # shopify.dev's own Money scalar page, see docs/SOURCES.md.
-                "variants": [{"price": str(price)}],
+                #
+                # inventoryPolicy: CONTINUE - found live 2026-10-14: every
+                # product this project had ever published was real (status
+                # ACTIVE) but unbuyable - Shopify's own default,
+                # inventoryPolicy=DENY, blocks checkout once inventory hits
+                # zero, and this store never holds real stock at all (CJ
+                # fulfils on demand per order). The owner saw this as "the
+                # store is empty" - the 6 real products already live were
+                # fixed directly against the real API (see docs/SOURCES.md),
+                # this stops every future one from shipping broken the
+                # same way.
+                "variants": [{"price": str(price), "inventoryPolicy": "CONTINUE"}],
                 "strategy": "REMOVE_STANDALONE_VARIANT",
             },
         )["productVariantsBulkCreate"]

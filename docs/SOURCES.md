@@ -1467,3 +1467,58 @@ the market) with a platform fee of 7 - "الربح 5 كافية لانهم يس�
   `check_order_limits` and `meets_min_margin`'s own unit tests - no longer
   exist to test anything; new tests were added for the replacement
   behaviour in the same files).
+
+## Real bug found: every published product was unbuyable - 2026-10-14
+
+Owner asked directly: "و لماذا دكاننا فارغ من المنتوجات؟" (why is our store
+empty of products?). Checked the real production database first (6 publish_
+product proposals at status=executed, 0 at execution_failed), which looked
+fine - so checked the ground truth instead: called the real Shopify Admin
+API directly from this session with the real store credentials
+(`RealShopifyClient.get_products()` against the live store).
+
+Real result: **6 real products exist**, `status: ACTIVE`, real Italian
+titles, real prices, each linked to a real CJ product via its metafield -
+but every single one had `totalInventory: 0` with
+`variants[0].inventoryPolicy: "DENY"` (confirmed with a live introspection-
+backed GraphQL query against the real store, not assumed). `DENY` is
+Shopify's own default when `inventoryPolicy` is omitted from
+`ProductVariantsBulkInput` - and it means checkout is blocked once a
+variant's inventory reaches zero. This store never holds real stock at all
+(CJ fulfils on demand per paid order), so every product Shopify created was
+correctly listed, correctly priced, and completely unpurchasable from the
+moment it existed - which is indistinguishable from "the store is empty" to
+anyone trying to actually buy something.
+
+(Separately checked and confirmed NOT fixable from here: `onlineStoreUrl`
+is `null` on all 6 products too, meaning none is published to the Online
+Store sales channel either - but querying/mutating publications requires
+the `read_publications`/`write_publications` access scope, and a live
+`currentAppInstallation { accessScopes { handle } }` query confirmed this
+app only has `read_products`, `write_products`, `read_orders`,
+`write_orders`, `read_fulfillments`, `write_fulfillments`. This is a
+genuine blocker reported to the owner, not worked around - it requires the
+owner to add those two scopes to the custom app's configuration in Shopify
+Admin before this half of the fix can be verified or coded.)
+
+- Verified `inventoryPolicy` is a real field on `ProductVariantsBulkInput`
+  and `CONTINUE`/`DENY` are its real enum values via a live introspection
+  query against the real store (`__type(name: "ProductVariantsBulkInput")`
+  / `__type(name: "ProductVariantInventoryPolicy")`), before writing any
+  code - not guessed from training data, consistent with every other
+  Shopify field this project has ever used.
+- **The 6 already-broken real products were fixed live, directly against
+  the real API**, from this session, using the same credentials the app
+  itself uses: a `productVariantsBulkUpdate` mutation setting
+  `inventoryPolicy: CONTINUE` on each one's variant. All 6 calls returned
+  `userErrors: []`. This was necessary in addition to the code fix below -
+  the code fix only protects *future* products, these 6 already existed
+  with the broken default baked in.
+- `RealShopifyClient.create_product()` (`src/integrations/shopify_client.py`)
+  now sends `"inventoryPolicy": "CONTINUE"` in every `ProductVariantsBulkInput`
+  it creates, so no future product ships in the same broken state.
+  Mutation-tested: reverting to the old `{"price": str(price)}` payload
+  made `test_create_product_calls_productCreate_then_productVariantsBulkCreate_and_returns_the_product_id`
+  fail on exactly the missing field, then restored to green.
+- Full suite: 143 passed after this fix (no test count change - one
+  existing test's assertion was extended, not added/removed).

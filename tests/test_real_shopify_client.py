@@ -124,7 +124,10 @@ def test_create_product_calls_productCreate_then_productVariantsBulkCreate_and_r
     assert second_vars["productId"] == "gid://shopify/Product/1"
     # Money is a bare decimal-string scalar, not a {amount, currencyCode}
     # object - found live on 2026-10-13 ("invalid money" from Shopify).
-    assert second_vars["variants"] == [{"price": "19.99"}]
+    # inventoryPolicy=CONTINUE - found live 2026-10-14: Shopify's own
+    # default (DENY) makes a 0-stock dropshipped product unbuyable the
+    # moment it's created, since this store never holds real stock at all.
+    assert second_vars["variants"] == [{"price": "19.99", "inventoryPolicy": "CONTINUE"}]
     assert second_vars["strategy"] == "REMOVE_STANDALONE_VARIANT"
 
 

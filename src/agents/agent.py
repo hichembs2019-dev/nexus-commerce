@@ -1,8 +1,19 @@
-"""One Agent class, instantiated 5 times as A1..A5 - identical system
-prompt, identical reasoning client type, identical permissions (none of them
-can themselves call Shopify/CJ/Telegram; see consensus.py and the
-executor, which are the only things that ever do). Nothing distinguishes one
-agent from another except the name used in the audit trail.
+"""One Agent class, instantiated as A1..A2 - identical system prompt,
+identical reasoning client type, identical permissions (none of them can
+themselves call Shopify/CJ/Telegram; see consensus.py and the executor,
+which are the only things that ever do). Nothing distinguishes one agent
+from another except the name used in the audit trail.
+
+Owner's own explicit, direct instruction (2026-10-14): reduced from 5 to 2
+agents, as a real experiment - "احذف ثلاثة وكلاء و ابقِ على اثنان" - after
+the real evidence that 5 real Gemini calls per round, under the free
+tier's real failure rate, rarely all landed cleanly enough to agree. Fewer
+agents means fewer real API calls per round (faster, cheaper) and fewer
+chances for one flaky call to block a round. See docs/SOURCES.md for the
+measured result that led here, and the owner's own words: "ان نجح كل شيء
+سنغير لاحقا و ندفع" (if this works, we'll switch later and pay) - this is
+an explicit, acknowledged interim trade-off, not a silent permanent
+redesign.
 """
 from __future__ import annotations
 
@@ -14,7 +25,7 @@ from ..db.models import AgentVote, Proposal
 from ..integrations.anthropic_client import AgentReasoningClient
 from .prompts import AGENT_SYSTEM_PROMPT, build_review_prompt
 
-AGENT_NAMES = ("A1", "A2", "A3", "A4", "A5")
+AGENT_NAMES = ("A1", "A2")
 
 
 @dataclass
@@ -94,6 +105,6 @@ class Agent:
 
 
 def build_five_agents(reasoning_clients: list[AgentReasoningClient]) -> list[Agent]:
-    if len(reasoning_clients) != 5:
-        raise ValueError("exactly 5 reasoning clients are required, one per agent (spec: A1..A5)")
+    if len(reasoning_clients) != len(AGENT_NAMES):
+        raise ValueError(f"exactly {len(AGENT_NAMES)} reasoning clients are required, one per agent")
     return [Agent(name, client) for name, client in zip(AGENT_NAMES, reasoning_clients)]

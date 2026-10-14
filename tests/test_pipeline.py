@@ -1,3 +1,4 @@
+from src.agents.agent import AGENT_NAMES
 from src.db import repository
 from src.db.models import ActionType, ProposalStatus
 from src.workflows.pipeline import (
@@ -47,7 +48,7 @@ def test_submit_proposal_within_limits_runs_full_consensus(conn, settings):
     )
 
     assert proposal.status == ProposalStatus.CONSENSUS_REACHED.value
-    assert len(repository.get_votes_for_round(conn, proposal.id, 1)) == 5
+    assert len(repository.get_votes_for_round(conn, proposal.id, 1)) == len(AGENT_NAMES)
 
 
 def test_submit_proposal_with_low_margin_cost_breakdown_is_auto_rejected(conn, settings):

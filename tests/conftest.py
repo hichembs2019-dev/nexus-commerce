@@ -54,12 +54,12 @@ def amending_reasoning_client(amended_payload: dict, reason: str = "let's tweak 
 
 
 def build_agents(reasoning_clients: list) -> list[Agent]:
-    assert len(reasoning_clients) == 5
+    assert len(reasoning_clients) == len(AGENT_NAMES)
     return [Agent(name, client) for name, client in zip(AGENT_NAMES, reasoning_clients)]
 
 
 def all_approving_agents() -> list[Agent]:
-    return build_agents([approving_reasoning_client() for _ in range(5)])
+    return build_agents([approving_reasoning_client() for _ in range(len(AGENT_NAMES))])
 
 
 @pytest.fixture()

@@ -10,7 +10,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 
-from .agents.agent import Agent, build_five_agents
+from .agents.agent import AGENT_NAMES, Agent, build_five_agents
 from .config import Settings
 from .db.database import init_db
 from .integrations.anthropic_client import (
@@ -74,30 +74,34 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
             logger.warning("TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set - using MockTelegramClient")
         telegram = MockTelegramClient()
 
-    # consensus.py requires a UNANIMOUS approve from all 5 agents (run_consensus:
-    # `all(d.vote == "approve" ...)`), and any agent whose reasoning call
-    # errors auto-degrades to a permanent "reject" (_review_with_fallback) -
-    # never a crash, but also never a consensus, for as long as that one
-    # agent's provider keeps failing. So mixing a broken provider into the
-    # 5 is not a safe way to "diversify" - found live 2026-10-13 when the
-    # Anthropic account ran out of credit mid-run and every proposal then
-    # failed consensus silently. Gemini (free, verified working live) runs
-    # ALL 5 agents whenever it's configured, not split with Anthropic, so
-    # a real vote can actually complete. See docs/SOURCES.md "Gemini agent
-    # reasoning" for the live proof and how to mix them again once both are
-    # confirmed healthy (change the two zip()'d lists below).
+    # consensus.py requires MIN_APPROVALS real "approve" votes out of
+    # len(agents) (run_consensus), and any agent whose reasoning call errors
+    # auto-degrades to a permanent "reject" (_review_with_fallback) - never
+    # a crash, but also never a vote, for as long as that one agent's
+    # provider keeps failing. So mixing a broken provider in is not a safe
+    # way to "diversify" - found live 2026-10-13 when the Anthropic account
+    # ran out of credit mid-run and every proposal then failed consensus
+    # silently. Gemini (free, verified working live) runs every agent
+    # whenever it's configured, not split with Anthropic, so a real vote
+    # can actually complete. See docs/SOURCES.md "Gemini agent reasoning"
+    # for the live proof and how to mix them again once both are confirmed
+    # healthy (change the two zip()'d lists below).
+    #
+    # Agent count is len(AGENT_NAMES) in src/agents/agent.py (2, as of the
+    # owner's 2026-10-14 experiment - see that module's docstring).
+    agent_count = len(AGENT_NAMES)
     if not force_mocks and settings.gemini_configured:
         reasoning_clients: list[AgentReasoningClient] = [
-            RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model) for _ in range(5)
+            RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model) for _ in range(agent_count)
         ]
     elif not force_mocks and settings.anthropic_configured:
         reasoning_clients = [
-            RealAgentReasoningClient(settings.anthropic_api_key, settings.claude_model) for _ in range(5)
+            RealAgentReasoningClient(settings.anthropic_api_key, settings.claude_model) for _ in range(agent_count)
         ]
     else:
         if not force_mocks:
-            logger.warning("Neither GEMINI_API_KEY nor ANTHROPIC_API_KEY set - using MockAgentReasoningClient for all 5 agents")
-        reasoning_clients = [MockAgentReasoningClient() for _ in range(5)]
+            logger.warning("Neither GEMINI_API_KEY nor ANTHROPIC_API_KEY set - using MockAgentReasoningClient for every agent")
+        reasoning_clients = [MockAgentReasoningClient() for _ in range(agent_count)]
     agents = build_five_agents(reasoning_clients)
 
     if not force_mocks and settings.anthropic_configured:

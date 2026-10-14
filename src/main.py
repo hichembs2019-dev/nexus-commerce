@@ -13,7 +13,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from .app import build_app
 from .config import load_settings
-from .scheduler import run_daily, run_hourly
+from .scheduler import resend_stuck_consensus_reached_proposals, run_daily, run_hourly
 from .workflows.pipeline import handle_telegram_decision
 
 
@@ -23,6 +23,14 @@ def main() -> None:
     logger = logging.getLogger("nexus_commerce.main")
 
     app = build_app(settings)
+
+    # Found live 2026-10-14: a real proposal the agents already agreed on
+    # (CONSENSUS_REACHED) never reached the owner because the process was
+    # restarted before it was sent - nothing else ever revisits it. Sweep
+    # once at every startup so a restart can never strand a real decision.
+    resent = resend_stuck_consensus_reached_proposals(app)
+    if resent:
+        logger.warning("resent %d proposal(s) stuck at consensus_reached from before this restart", resent)
 
     scheduler = BackgroundScheduler()
     scheduler.add_job(

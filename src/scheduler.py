@@ -75,3 +75,22 @@ def _send_if_consensus_reached(app: App, proposal) -> None:
         send_for_telegram_approval(app.conn, proposal, app.telegram)
     # FAILED_CONSENSUS / AUTO_REJECTED proposals are already fully logged by
     # submit_proposal() itself - nothing further to do with them here.
+
+
+def resend_stuck_consensus_reached_proposals(app: App) -> int:
+    """Found live 2026-10-14: a real agreed-upon proposal (#25) reached
+    CONSENSUS_REACHED, but the process was restarted (deploying an urgent
+    fix) before run_daily()'s own `for proposal in proposals:` loop - which
+    only ever sees proposals it JUST created in that same call - got to
+    send it. Nothing else in this codebase ever revisits an older
+    CONSENSUS_REACHED row, so it would have sat there forever, silently,
+    never reaching the owner. Call this once at startup so a restart can
+    never again strand a real decision the agents already agreed on.
+    """
+    from .db import repository
+    from .db.models import ProposalStatus
+
+    stuck = repository.get_proposals_by_status(app.conn, ProposalStatus.CONSENSUS_REACHED.value)
+    for proposal in stuck:
+        _send_if_consensus_reached(app, proposal)
+    return len(stuck)

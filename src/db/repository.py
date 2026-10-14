@@ -35,6 +35,11 @@ def get_proposal(conn: sqlite3.Connection, proposal_id: int) -> Proposal:
     return _row_to_proposal(row)
 
 
+def get_proposals_by_status(conn: sqlite3.Connection, status: str) -> list[Proposal]:
+    rows = conn.execute("SELECT * FROM proposals WHERE status = ? ORDER BY id", (status,)).fetchall()
+    return [_row_to_proposal(row) for row in rows]
+
+
 def update_proposal_status(conn: sqlite3.Connection, proposal_id: int, status: str) -> None:
     conn.execute(
         "UPDATE proposals SET status = ?, updated_at = datetime('now') WHERE id = ?",

@@ -18,6 +18,7 @@ from .integrations.anthropic_client import (
     MockAgentReasoningClient,
     RealAgentReasoningClient,
     RealGeminiReasoningClient,
+    RealGroqReasoningClient,
 )
 from .integrations.cj_client import CJClient, MockCJClient, RealCJClient
 from .integrations.shopify_client import MockShopifyClient, RealShopifyClient, ShopifyClient
@@ -90,8 +91,22 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
     # owner's 2026-10-14 experiment - see that module's docstring).
     agent_count = len(AGENT_NAMES)
     if not force_mocks and settings.gemini_configured:
+        # Groq (owner's real key, added live 2026-10-14 - see docs/SOURCES.md
+        # "Groq fallback") is each Gemini call's OWN fallback once Gemini's
+        # own retries are exhausted - never a different provider for a
+        # different agent mid-round, which is exactly the mixing documented
+        # above as unsafe. A fresh RealGroqReasoningClient per agent, same as
+        # every other reasoning client here.
+        groq_fallback = (
+            RealGroqReasoningClient(settings.groq_api_key, settings.groq_model) if settings.groq_configured else None
+        )
         reasoning_clients: list[AgentReasoningClient] = [
-            RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model) for _ in range(agent_count)
+            RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model, fallback=groq_fallback)
+            for _ in range(agent_count)
+        ]
+    elif not force_mocks and settings.groq_configured:
+        reasoning_clients = [
+            RealGroqReasoningClient(settings.groq_api_key, settings.groq_model) for _ in range(agent_count)
         ]
     elif not force_mocks and settings.anthropic_configured:
         reasoning_clients = [
@@ -99,7 +114,7 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
         ]
     else:
         if not force_mocks:
-            logger.warning("Neither GEMINI_API_KEY nor ANTHROPIC_API_KEY set - using MockAgentReasoningClient for every agent")
+            logger.warning("Neither GEMINI_API_KEY nor GROQ_API_KEY nor ANTHROPIC_API_KEY set - using MockAgentReasoningClient for every agent")
         reasoning_clients = [MockAgentReasoningClient() for _ in range(agent_count)]
     agents = build_five_agents(reasoning_clients)
 

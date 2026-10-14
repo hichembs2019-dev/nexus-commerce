@@ -48,6 +48,13 @@ class Settings:
     gemini_api_key: str = ""
     gemini_model: str = "gemma-4-26b-a4b-it"
 
+    # Groq - verified live 2026-10-14, see docs/SOURCES.md "Groq fallback".
+    # Used as RealGeminiReasoningClient's own fallback when Gemini's
+    # retries are exhausted (src/app.py), or standalone if Gemini isn't
+    # configured.
+    groq_api_key: str = ""
+    groq_model: str = "openai/gpt-oss-120b"
+
     # Shopify - Client credentials grant (verified 2026-10-12, see
     # docs/SOURCES.md "Shopify > Client credentials access token"): the app
     # exchanges its own Client ID + Secret for an access token itself, no
@@ -99,6 +106,10 @@ class Settings:
     def gemini_configured(self) -> bool:
         return bool(self.gemini_api_key)
 
+    @property
+    def groq_configured(self) -> bool:
+        return bool(self.groq_api_key)
+
 
 def load_settings(env_path: str | Path | None = None) -> Settings:
     """Loads .env (if present) then reads os.environ. A missing .env is not
@@ -116,6 +127,8 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         claude_model=_str(os.environ.get("CLAUDE_MODEL"), "claude-sonnet-5-5"),
         gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),
         gemini_model=_str(os.environ.get("GEMINI_MODEL"), "gemma-4-26b-a4b-it"),
+        groq_api_key=os.environ.get("GROQ_API_KEY", ""),
+        groq_model=_str(os.environ.get("GROQ_MODEL"), "openai/gpt-oss-120b"),
         shopify_shop_url=os.environ.get("SHOPIFY_SHOP_URL", ""),
         shopify_client_id=os.environ.get("SHOPIFY_CLIENT_ID", ""),
         shopify_client_secret=os.environ.get("SHOPIFY_CLIENT_SECRET", ""),

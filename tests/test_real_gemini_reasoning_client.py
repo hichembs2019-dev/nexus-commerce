@@ -5,7 +5,7 @@ real project code.
 """
 from __future__ import annotations
 
-from src.integrations.anthropic_client import RealGeminiReasoningClient
+from src.integrations.anthropic_client import RealGeminiReasoningClient, RealGroqReasoningClient
 
 
 class _FakeResponse:
@@ -181,3 +181,101 @@ def test_complete_does_not_retry_a_non_rate_limit_client_error(monkeypatch):
         client.complete("sys", "user")
 
     assert call_count == 1
+
+
+def test_complete_falls_back_to_a_real_second_provider_after_exhausting_retries(monkeypatch):
+    # Owner's real Groq key, added live 2026-10-14 right after a real spike
+    # in Gemini's 500 rate - the fallback must actually be used instead of
+    # giving up and letting the whole agent vote auto-reject.
+    from google.genai import errors
+
+    class _FakeModels:
+        def generate_content(self, *, model, contents):
+            raise errors.ServerError(500, {"error": {"message": "Internal error"}})
+
+    class _FakeClient:
+        def __init__(self, *, api_key):
+            self.models = _FakeModels()
+
+    from google import genai
+
+    monkeypatch.setattr(genai, "Client", _FakeClient)
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+
+    class _FakeFallback:
+        def __init__(self):
+            self.calls = []
+
+        def complete(self, system_prompt, user_prompt):
+            self.calls.append((system_prompt, user_prompt))
+            return '{"vote": "approve", "reason": "from fallback"}'
+
+    fallback = _FakeFallback()
+    client = RealGeminiReasoningClient(api_key="fake-key", model="gemma-4-26b-a4b-it", fallback=fallback)
+
+    result = client.complete("sys", "user")
+
+    assert result == '{"vote": "approve", "reason": "from fallback"}'
+    assert fallback.calls == [("sys", "user")]
+
+
+class _FakeHttpxResponse:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def test_groq_complete_posts_the_messages_and_returns_the_content(monkeypatch):
+    # Verified live 2026-10-14: a real POST to
+    # https://api.groq.com/openai/v1/chat/completions with a real key
+    # returned the standard OpenAI-compatible choices[0].message.content
+    # shape (confirmed against the real /v1/models list first).
+    calls = []
+
+    def fake_post(url, *, headers, json, timeout):
+        calls.append((url, headers, json))
+        return _FakeHttpxResponse(
+            {"choices": [{"message": {"role": "assistant", "content": '{"vote": "approve", "reason": "ok"}'}}]}
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    client = RealGroqReasoningClient(api_key="fake-groq-key", model="openai/gpt-oss-120b")
+    result = client.complete("You are agent A1.", "Review this proposal: ...")
+
+    assert result == '{"vote": "approve", "reason": "ok"}'
+    assert len(calls) == 1
+    url, headers, body = calls[0]
+    assert url == "https://api.groq.com/openai/v1/chat/completions"
+    assert headers["Authorization"] == "Bearer fake-groq-key"
+    assert body == {
+        "model": "openai/gpt-oss-120b",
+        "messages": [
+            {"role": "system", "content": "You are agent A1."},
+            {"role": "user", "content": "Review this proposal: ..."},
+        ],
+    }
+
+
+def test_groq_complete_raises_clearly_on_a_real_error_response(monkeypatch):
+    # Verified live 2026-10-14: a wrong model name returned a real 404 with
+    # {"error": {"message": "...", "type": "invalid_request_error", ...}}.
+    def fake_post(url, *, headers, json, timeout):
+        return _FakeHttpxResponse(
+            {"error": {"message": "The model `bad-model` does not exist", "type": "invalid_request_error"}}
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    client = RealGroqReasoningClient(api_key="fake-groq-key", model="bad-model")
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="Groq completion failed"):
+        client.complete("sys", "user")

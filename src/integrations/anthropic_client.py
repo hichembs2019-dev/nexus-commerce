@@ -46,11 +46,19 @@ class RealGeminiReasoningClient(AgentReasoningClient):
     of the Anthropic balance.
     """
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, fallback: AgentReasoningClient | None = None):
         from google import genai
 
         self._client = genai.Client(api_key=api_key)
         self._model = model
+        # Owner's own real key, added live 2026-10-14 right after Gemini's
+        # real error rate spiked (see docs/SOURCES.md "Groq fallback") - a
+        # second, independent provider to fall back to once Gemini's own
+        # retries are exhausted, rather than giving up and auto-rejecting.
+        # Never mixed mid-round the way src/app.py already documents not
+        # mixing Gemini/Anthropic - this is the SAME agent's own call
+        # falling back, not a different agent using a different provider.
+        self._fallback = fallback
 
     # Found live 2026-10-13 (see docs/SOURCES.md): roughly half of real
     # calls to gemma-4-26b-a4b-it came back `500 Internal Server Error` -
@@ -88,7 +96,45 @@ class RealGeminiReasoningClient(AgentReasoningClient):
                     import time
 
                     time.sleep(self._RATE_LIMIT_RETRY_DELAY_SECONDS if is_rate_limit else self._RETRY_DELAY_SECONDS)
+        if self._fallback is not None:
+            return self._fallback.complete(system_prompt, user_prompt)
         raise last_error
+
+
+class RealGroqReasoningClient(AgentReasoningClient):
+    """Verified live 2026-10-14 - a real POST to
+    https://api.groq.com/openai/v1/chat/completions with the owner's real
+    key returned a real 200 and the standard OpenAI-compatible
+    choices[0].message.content shape (confirmed against the real
+    /v1/models list first - "llama-3.3-70b-versatile" doesn't exist for
+    this key, "openai/gpt-oss-120b" does). Used both as
+    RealGeminiReasoningClient's own fallback and standalone if Gemini isn't
+    configured - see src/app.py.
+    """
+
+    def __init__(self, api_key: str, model: str):
+        self._api_key = api_key
+        self._model = model
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        import httpx
+
+        response = httpx.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
+            json={
+                "model": self._model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            },
+            timeout=30,
+        )
+        payload = response.json()
+        if "error" in payload:
+            raise RuntimeError(f"Groq completion failed: {payload['error'].get('message')}")
+        return payload["choices"][0]["message"]["content"] or ""
 
 
 class MockAgentReasoningClient(AgentReasoningClient):

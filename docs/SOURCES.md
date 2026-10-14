@@ -1278,3 +1278,33 @@ not a `{amount, currencyCode}` object, so there was never anywhere real to
 use a currency code - the setting gave a false impression of control over
 something the API does not take as input. Removed rather than wired in
 anywhere, since wiring in an unused value would itself be a kind of guess.
+
+## Groq fallback - verified live 2026-10-14
+
+Owner provided a real Groq API key right after a real spike in Gemini's
+own 500 error rate was observed in the live production server's logs.
+Verified directly against the real API before writing any code:
+
+- `GET https://api.groq.com/openai/v1/models` with the real key listed the
+  real models actually available to it - `llama-3.3-70b-versatile` (a
+  commonly-cited Groq model name) returned a real 404
+  `model_not_found` on a direct completion attempt; `openai/gpt-oss-120b`
+  is real and listed.
+- `POST https://api.groq.com/openai/v1/chat/completions` with
+  `{"model": "openai/gpt-oss-120b", "messages": [...]}` returned a real
+  200 with the standard OpenAI-compatible shape:
+  `choices[0].message.content` - confirmed with a live round-trip
+  ("Reply with exactly the word: OK" -> `"content": "OK"`).
+
+`RealGroqReasoningClient` (`src/integrations/anthropic_client.py`) is a
+direct `httpx` POST to that real endpoint/shape - no SDK dependency needed,
+matching every other `httpx`-based client already in this project.
+
+Wired as `RealGeminiReasoningClient`'s own `fallback` parameter
+(`src/app.py`): once Gemini's own retries are exhausted, the SAME agent's
+call falls back to a real second provider rather than giving up and
+auto-rejecting via `_review_with_fallback()`. This is deliberately NOT the
+same thing as mixing Anthropic/Gemini across different agents (documented
+above as unsafe, found live 2026-10-13) - it is one agent's one call
+extending its own retry chain to a second real provider, so every
+agent's own vote is still self-consistent per call.

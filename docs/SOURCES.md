@@ -1206,3 +1206,36 @@ Both fixes are mutation-tested in `tests/test_real_cj_client.py`: reverting
 the real "Variant not found" shape in the new vid-resolution tests, and
 removing the retry reproduces a crash on the real 429 body in the retry
 test; both pass again with the fix restored.
+
+## Consensus threshold lowered to 2/5 - owner's explicit decision, 2026-10-14
+
+With both CJ fixes above live, the service ran continuously for ~4.5 real
+hours under the owner's own 1-minute cadence. Real result, counted directly
+from `proposals.status` in the live database: **20 real candidates reached
+a decision; 0 ever reached `consensus_reached` under strict 5/5 literal
+unanimity.** Every one of the 20 ended `failed_consensus` after the full 3
+rounds (or was still `pending_review`, i.e. mid-round, when the service was
+stopped). The live log over that window showed the real cause: Gemini's
+free tier returning real `503 Service Unavailable` and `429 Too Many
+Requests` responses under the owner's chosen cadence - not bad candidates,
+not a bug in `run_consensus()` itself, which was working exactly as
+designed (recording every vote, retrying failures, never crashing, never
+silently approving a parse failure).
+
+Shown this real, counted result, the owner made an explicit decision: change
+`run_consensus()`'s rule from literal 5/5 unanimity to `MIN_APPROVALS = 2`
+("صيغها اثنان على خمسة 2/5"). This is a real, owner-directed change to the
+project's own business rule, not a workaround invented unprompted - see
+`src/agents/consensus.py`'s module docstring for the full reasoning kept
+with the code. `AGENT_SYSTEM_PROMPT` (`src/agents/prompts.py`) was also
+corrected to stop telling the 5 agents literal unanimity is required, since
+that was no longer true and would have misled their own reasoning about
+when a vote is decisive.
+
+`tests/test_consensus.py` was rewritten end to end for this (every scenario
+depends on how many approvals clear the threshold) and mutation-tested as a
+set: reverting the threshold check to `all(d.vote == "approve" ...)`
+reproduces 5 real test failures (the boundary tests, the amendment tests,
+and the unparseable-reply test, which all now rely on 2/5 semantics to mean
+what they assert); restoring `MIN_APPROVALS` passes all of them again. Full
+suite: 129 passed.

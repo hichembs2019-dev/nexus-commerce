@@ -1,7 +1,7 @@
 import json
 
 from src.agents.agent import Agent
-from src.agents.consensus import MAX_ROUNDS, run_consensus
+from src.agents.consensus import MAX_ROUNDS, MIN_APPROVALS, run_consensus
 from src.db import repository
 from src.db.models import ProposalStatus
 from src.integrations.anthropic_client import MockAgentReasoningClient
@@ -38,7 +38,10 @@ def _make_proposal(conn):
     )
 
 
-# --- spec-required case: consensus (all 5 approve) ---
+# --- owner's explicit instruction (2026-10-14): MIN_APPROVALS = 2, not 5/5 ---
+# Real reason, see src/agents/consensus.py's module doc: strict 5/5 reached
+# consensus 0 times out of 20 real candidates over ~4.5 hours of real
+# operation under the free Gemini tier's real failure rate.
 
 def test_unanimous_approval_in_round_1_reaches_consensus(conn):
     proposal = _make_proposal(conn)
@@ -53,18 +56,37 @@ def test_unanimous_approval_in_round_1_reaches_consensus(conn):
     assert all(v.vote == "approve" for v in votes)
 
 
-# --- spec-required case: rejection ---
-
-def test_a_single_reject_prevents_consensus_in_that_round(conn):
+def test_exactly_min_approvals_reaches_consensus_even_with_a_majority_rejecting(conn):
+    # The owner's own explicit threshold: 2 of 5, not a majority of 3.
+    assert MIN_APPROVALS == 2
     proposal = _make_proposal(conn)
-    # 4 approve round 1, 1 rejects round 1; all approve round 2.
+    agents = _agents(
+        [
+            [_approve()],
+            [_approve()],
+            [_reject("too expensive")],
+            [_reject("too expensive")],
+            [_reject("too expensive")],
+        ]
+    )
+
+    result = run_consensus(conn, proposal, agents)
+
+    assert result.status == ProposalStatus.CONSENSUS_REACHED.value
+    assert result.round == 1
+
+
+def test_fewer_than_min_approvals_does_not_reach_consensus_in_that_round(conn):
+    proposal = _make_proposal(conn)
+    # Only 1 approval in round 1 (below MIN_APPROVALS=2); 2 approvals in
+    # round 2 clears it.
     agents = _agents(
         [
             [_approve(), _approve()],
-            [_approve(), _approve()],
-            [_approve(), _approve()],
-            [_approve(), _approve()],
-            [_reject("too expensive"), _approve()],
+            [_reject("no"), _approve()],
+            [_reject("no"), _reject("no")],
+            [_reject("no"), _reject("no")],
+            [_reject("no"), _reject("no")],
         ]
     )
 
@@ -73,18 +95,18 @@ def test_a_single_reject_prevents_consensus_in_that_round(conn):
     assert result.status == ProposalStatus.CONSENSUS_REACHED.value
     assert result.round == 2
     round1_votes = repository.get_votes_for_round(conn, proposal.id, 1)
-    assert any(v.vote == "reject" and v.reason == "too expensive" for v in round1_votes)
+    assert sum(1 for v in round1_votes if v.vote == "approve") == 1  # below MIN_APPROVALS
 
 
 def test_rejection_that_never_resolves_fails_after_max_rounds(conn):
     proposal = _make_proposal(conn)
-    # A5 rejects every single round, no one ever amends.
+    # Only 1 approval every round (below MIN_APPROVALS=2) - never clears it.
     agents = _agents(
         [
             [_approve()] * MAX_ROUNDS,
-            [_approve()] * MAX_ROUNDS,
-            [_approve()] * MAX_ROUNDS,
-            [_approve()] * MAX_ROUNDS,
+            [_reject("never")] * MAX_ROUNDS,
+            [_reject("never")] * MAX_ROUNDS,
+            [_reject("never")] * MAX_ROUNDS,
             [_reject("never")] * MAX_ROUNDS,
         ]
     )
@@ -100,13 +122,15 @@ def test_rejection_that_never_resolves_fails_after_max_rounds(conn):
 def test_an_amendment_becomes_the_candidate_payload_for_the_next_round(conn):
     proposal = _make_proposal(conn)
     amended = {"quantity": 2}
+    # Round 1: only 1 approval (below MIN_APPROVALS) so the amendment is
+    # actually picked up for round 2, where it clears the threshold.
     agents = _agents(
         [
             [_approve(), _approve()],
-            [_approve(), _approve()],
-            [_approve(), _approve()],
-            [_approve(), _approve()],
-            [_amend(amended, "need more stock"), _approve()],
+            [_reject("no"), _approve()],
+            [_reject("no"), _reject("no")],
+            [_reject("no"), _reject("no")],
+            [_amend(amended, "need more stock"), _reject("no")],
         ]
     )
 
@@ -121,13 +145,15 @@ def test_two_different_amendments_in_one_round_the_first_agent_order_wins(conn):
     proposal = _make_proposal(conn)
     a2_amendment = {"quantity": 2}
     a4_amendment = {"quantity": 4}
+    # Round 1: 0 approvals (below MIN_APPROVALS), two different amendments -
+    # the first in agent order (A2) is picked as round 2's candidate.
     agents = _agents(
         [
-            [_approve(), _approve()],
+            [_reject("no"), _approve()],
             [_amend(a2_amendment), _approve()],
-            [_approve(), _approve()],
-            [_amend(a4_amendment), _approve()],
-            [_approve(), _approve()],
+            [_reject("no"), _reject("no")],
+            [_amend(a4_amendment), _reject("no")],
+            [_reject("no"), _approve()],
         ]
     )
 
@@ -136,20 +162,19 @@ def test_two_different_amendments_in_one_round_the_first_agent_order_wins(conn):
     # Documented design choice in consensus.py: first amendment in agent
     # order (A1..A5) wins - here that's A2's, not A4's.
     assert result.payload == a2_amendment
+    assert result.status == ProposalStatus.CONSENSUS_REACHED.value
 
-
-# --- spec-required case: failure after 3 rounds (no consensus reached at all) ---
 
 def test_never_reaching_consensus_after_3_rounds_is_marked_failed_and_cancelled(conn):
     proposal = _make_proposal(conn)
-    # Every round: 4 approve, 1 keeps amending to a new value - literal
-    # unanimous approval of one exact version never happens.
+    # Every round: at most 1 approval (below MIN_APPROVALS=2) - the
+    # threshold is never cleared across all 3 rounds.
     agents = _agents(
         [
             [_approve()] * MAX_ROUNDS,
-            [_approve()] * MAX_ROUNDS,
-            [_approve()] * MAX_ROUNDS,
-            [_approve()] * MAX_ROUNDS,
+            [_reject("no")] * MAX_ROUNDS,
+            [_reject("no")] * MAX_ROUNDS,
+            [_reject("no")] * MAX_ROUNDS,
             [_amend({"quantity": 2}), _amend({"quantity": 3}), _amend({"quantity": 4})],
         ]
     )
@@ -165,16 +190,17 @@ def test_never_reaching_consensus_after_3_rounds_is_marked_failed_and_cancelled(
 
 def test_an_unparseable_agent_reply_is_treated_as_a_reject_not_a_crash_or_silent_approve(conn):
     proposal = _make_proposal(conn)
-    # A5's round-1 reply is garbage; everyone (including A5) approves in
-    # every later round, scripted explicitly so this test's outcome depends
-    # only on round 1's parse failure, not on later rounds running out of
-    # scripted replies.
+    # Round 1: 1 real approval + A5's garbage reply. If the garbage reply
+    # were silently treated as an approve, round 1 would wrongly reach
+    # MIN_APPROVALS=2 right here. Treated correctly as a reject, it stays
+    # at 1 approval and consensus is only reached in round 2, once A5's
+    # real (parseable) reply is an actual approve.
     agents = _agents(
         [
             [_approve()] * MAX_ROUNDS,
-            [_approve()] * MAX_ROUNDS,
-            [_approve()] * MAX_ROUNDS,
-            [_approve()] * MAX_ROUNDS,
+            [_reject("no"), _approve()],
+            [_reject("no"), _reject("no")],
+            [_reject("no"), _reject("no")],
             ["this is not json at all", _approve(), _approve()],
         ]
     )
@@ -184,8 +210,5 @@ def test_an_unparseable_agent_reply_is_treated_as_a_reject_not_a_crash_or_silent
     round1_votes = repository.get_votes_for_round(conn, proposal.id, 1)
     a5_round1_vote = next(v for v in round1_votes if v.agent_name == "A5")
     assert a5_round1_vote.vote == "reject"
-    # Having been treated as a reject (not a silent approve), round 1 does
-    # NOT reach consensus - it only reaches it in round 2, once A5's real
-    # (parseable) reply is an actual approve.
     assert result.status == ProposalStatus.CONSENSUS_REACHED.value
     assert result.round == 2

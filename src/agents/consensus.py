@@ -1,8 +1,19 @@
 """Spec's consensus protocol, steps 1-4 (step 5, Telegram, and step 6,
 post-execution review, live in telegram_gate.py and executor.py). This
 module owns exactly: running up to 3 rounds, recording every vote, deciding
-whether unanimous identical approval was reached, and what happens to the
-payload when it wasn't.
+whether enough approval was reached, and what happens to the payload when it
+wasn't.
+
+Owner's own explicit, direct instruction (2026-10-14), after a real,
+measured result: under the live operating conditions of this session (free
+Gemini tier, 1-minute discovery cadence), strict 5/5 literal unanimity
+reached consensus **zero times out of 20 real candidates** over ~4.5 hours
+of real operation - not because any candidate was bad, but because getting
+5 consecutive successful, agreeing real API calls (up to 3 rounds) is
+statistically very hard at that failure rate. The owner was shown this
+real count before deciding. MIN_APPROVALS below is that explicit choice -
+"صيغها اثنان على خمسة 2/5" - not a guess or a default this project picked
+on its own.
 
 Documented design decisions this spec left open (see README.md and
 docs/ for mutation-testing on each):
@@ -33,6 +44,7 @@ from ..db.models import Proposal, ProposalStatus
 from .agent import Agent, parse_agent_decision
 
 MAX_ROUNDS = 3
+MIN_APPROVALS = 2  # out of 5 - owner's explicit instruction, see module doc
 
 
 def run_consensus(conn: sqlite3.Connection, proposal: Proposal, agents: list[Agent]) -> Proposal:
@@ -62,13 +74,19 @@ def run_consensus(conn: sqlite3.Connection, proposal: Proposal, agents: list[Age
 
         repository.update_proposal_round(conn, proposal.id, round_number, current_payload)
 
-        if all(d.vote == "approve" for d in decisions):
+        approve_count = sum(1 for d in decisions if d.vote == "approve")
+        if approve_count >= MIN_APPROVALS:
             repository.update_proposal_status(conn, proposal.id, ProposalStatus.CONSENSUS_REACHED.value)
             repository.audit(
                 conn,
                 actor="consensus_engine",
                 action="consensus_reached",
-                details={"proposal_id": proposal.id, "round": round_number},
+                details={
+                    "proposal_id": proposal.id,
+                    "round": round_number,
+                    "approve_count": approve_count,
+                    "total_agents": len(agents),
+                },
             )
             return repository.get_proposal(conn, proposal.id)
 

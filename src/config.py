@@ -56,10 +56,6 @@ class Settings:
     shopify_client_id: str = ""
     shopify_client_secret: str = ""
     shopify_api_version: str = "2024-07"
-    # The store's real currency was never confirmed (see docs/SOURCES.md
-    # "productCreate with images") - a simple, overridable default, not a
-    # verified fact about any specific store.
-    shopify_currency_code: str = "USD"
 
     # CJ Dropshipping - base URL verified 2026-10-11, see docs/SOURCES.md
     # "CJ Dropshipping > Authentication".
@@ -124,7 +120,6 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         shopify_client_id=os.environ.get("SHOPIFY_CLIENT_ID", ""),
         shopify_client_secret=os.environ.get("SHOPIFY_CLIENT_SECRET", ""),
         shopify_api_version=_str(os.environ.get("SHOPIFY_API_VERSION"), "2024-07"),
-        shopify_currency_code=_str(os.environ.get("SHOPIFY_CURRENCY_CODE"), "USD"),
         cj_api_key=os.environ.get("CJ_API_KEY", ""),
         cj_api_base_url=_str(
             os.environ.get("CJ_API_BASE_URL"), "https://developers.cjdropshipping.com/api2.0/v1"

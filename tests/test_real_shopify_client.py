@@ -24,7 +24,7 @@ class _FakeGraphQL:
 
 
 def _client(responses: list[dict]) -> tuple[RealShopifyClient, _FakeGraphQL]:
-    client = RealShopifyClient("test-shop.myshopify.com", "fake-client-id", "fake-client-secret", "2024-07", "USD")
+    client = RealShopifyClient("test-shop.myshopify.com", "fake-client-id", "fake-client-secret", "2024-07")
     client._access_token = "faketoken"  # skip the real auth exchange - covered separately below
     fake = _FakeGraphQL(responses)
     client._shopify.GraphQL = lambda: fake
@@ -274,6 +274,9 @@ def test_get_recent_orders_maps_the_real_response_shape_including_lowercasing_fi
                                                     "originalUnitPriceSet": {
                                                         "shopMoney": {"amount": "14.99", "currencyCode": "USD"}
                                                     },
+                                                    "product": {
+                                                        "metafield": {"value": "CJ-PRODUCT-1"},
+                                                    },
                                                 }
                                             }
                                         ]
@@ -283,6 +286,9 @@ def test_get_recent_orders_maps_the_real_response_shape_including_lowercasing_fi
                                         "address1": "1 Main St",
                                         "city": "Springfield",
                                         "countryCodeV2": "US",
+                                        "province": "Illinois",
+                                        "zip": "62701",
+                                        "phone": "+15551234567",
                                     },
                                 }
                             },
@@ -309,14 +315,70 @@ def test_get_recent_orders_maps_the_real_response_shape_including_lowercasing_fi
     assert orders[0].financial_status == "paid"  # lowercased from "PAID"
     assert orders[0].total_price == 29.99
     assert orders[0].line_items == [
-        {"id": "gid://shopify/LineItem/1", "name": "Widget", "quantity": 2, "price": "14.99"}
+        {
+            "id": "gid://shopify/LineItem/1",
+            "name": "Widget",
+            "quantity": 2,
+            "price": "14.99",
+            "cj_product_id": "CJ-PRODUCT-1",
+        }
     ]
     assert orders[0].shipping_address == {
-        "name": "Jane Doe", "address1": "1 Main St", "city": "Springfield", "country_code": "US"
+        "name": "Jane Doe",
+        "address1": "1 Main St",
+        "city": "Springfield",
+        "country_code": "US",
+        "province": "Illinois",
+        "zip": "62701",
+        "phone": "+15551234567",
     }
     # order 2 has no shippingAddress - must not crash, must come back empty
     assert orders[1].financial_status == "pending"
     assert orders[1].shipping_address == {}
+
+
+def test_get_recent_orders_defaults_cj_product_id_to_empty_string_when_the_line_item_has_no_product():
+    # A deleted product or a custom (non-catalog) line item has no "product"
+    # reference at all - must not crash, must come back as "".
+    client, fake = _client(
+        [
+            {
+                "data": {
+                    "orders": {
+                        "edges": [
+                            {
+                                "node": {
+                                    "id": "gid://shopify/Order/1",
+                                    "displayFinancialStatus": "PAID",
+                                    "totalPriceSet": {"shopMoney": {"amount": "5.00", "currencyCode": "USD"}},
+                                    "lineItems": {
+                                        "edges": [
+                                            {
+                                                "node": {
+                                                    "id": "gid://shopify/LineItem/1",
+                                                    "name": "Custom item",
+                                                    "quantity": 1,
+                                                    "originalUnitPriceSet": {
+                                                        "shopMoney": {"amount": "5.00", "currencyCode": "USD"}
+                                                    },
+                                                    "product": None,
+                                                }
+                                            }
+                                        ]
+                                    },
+                                    "shippingAddress": None,
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+    )
+
+    orders = client.get_recent_orders()
+
+    assert orders[0].line_items[0]["cj_product_id"] == ""
 
 
 def test_update_price_looks_up_the_first_variant_then_updates_its_price():

@@ -234,10 +234,11 @@ class RealCJClient(CJClient):
 
     def create_order(self, *, product_id: str, quantity: int, shipping_address: dict) -> str:
         # Verified 2026-10-12, vid fix 2026-10-13 - see docs/SOURCES.md
-        # "CJ Dropshipping > Create order". Remaining flagged gaps:
-        # shippingProvince has no real source in this project's Shopify
-        # order data, and orderNumber is generated locally since this
-        # method's signature carries no order reference.
+        # "CJ Dropshipping > Create order". shippingProvince now has a real
+        # source (Shopify's own "province" field, wired 2026-10-14 - see
+        # docs/UNVERIFIED.md "Shopify order shipping address"). Remaining
+        # flagged gap: orderNumber is generated locally since this method's
+        # signature carries no order reference.
         import uuid
 
         import httpx

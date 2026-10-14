@@ -1239,3 +1239,42 @@ reproduces 5 real test failures (the boundary tests, the amendment tests,
 and the unparseable-reply test, which all now rely on 2/5 semantics to mean
 what they assert); restoring `MIN_APPROVALS` passes all of them again. Full
 suite: 129 passed.
+
+## Shopify MailingAddress and LineItem.product fields - verified 2026-10-14
+
+`shopify.dev` was reachable from this session this time (unlike the egress
+block hit earlier - see the Shopify section above). Fetched
+`https://shopify.dev/docs/api/admin-graphql/latest/objects/MailingAddress`
+and `.../objects/LineItem` directly and read the real embedded GraphQL SDL
+off each page:
+
+- `MailingAddress`'s fields include `phone: String`, `province: String`,
+  and `zip: String` as genuine top-level fields (alongside `name`,
+  `address1`, `city`, `country`, `countryCode`, `provinceCode`, ...) - not
+  inferred. `get_recent_orders()`'s query now asks for all three; they
+  were never requested before, so `RealCJClient.create_order()` (which
+  already reads `province`/`zip`/`phone` off this same dict) would always
+  have sent empty strings for a real order, `shippingProvince` included.
+- `LineItem` has a `product: Product` field. Nested under it, the same
+  `metafield(namespace: "nexus_commerce", key: "cj_product_id") { value }`
+  pattern already verified and in production use on `_LIST_PRODUCTS` (see
+  "Product get with metafields") applies identically - confirmed by
+  checking `Product`'s own fields include `metafield(namespace:, key:)`,
+  the same page already cited for `create_product()`/`get_products()`.
+
+This closed two real gaps at once - see
+`docs/UNVERIFIED.md` "Shopify order shipping address" and "CJ_ORDER
+execution never had real line item data" for the full fix and the real
+crash it would have caused (`Executor._execute_real()`'s `CJ_ORDER` branch
+reading a `payload["product_id"]` that never existed in a real paid
+order's proposal).
+
+Also found and removed in the same pass: `RealShopifyClient` carried a
+`currency_code` constructor parameter (`Settings.shopify_currency_code`,
+`SHOPIFY_CURRENCY_CODE` env var) that was stored on `self._currency_code`
+but never read anywhere. Verified live 2026-10-13 (see "Variant price
+update" above): `ProductVariantsBulkInput.price` is a bare decimal string,
+not a `{amount, currencyCode}` object, so there was never anywhere real to
+use a currency code - the setting gave a false impression of control over
+something the API does not take as input. Removed rather than wired in
+anywhere, since wiring in an unused value would itself be a kind of guess.

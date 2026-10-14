@@ -79,12 +79,15 @@ class RealShopifyClient(ShopifyClient):
     )
 
     # productCreate (title/description/media) + productVariantsBulkCreate
-    # (price) are two separate mutations - see docs/SOURCES.md. Confirmed:
-    # price lives on the variant, not the product, and Money requires a
-    # currencyCode alongside amount. The store's actual currency was never
-    # confirmed this session (shopify.dev's answer used USD only as its own
-    # example) - this is a simple, documented, overridable default, not a
-    # verified fact about the owner's store.
+    # (price) are two separate mutations - see docs/SOURCES.md. Price lives
+    # on the variant, not the product. Verified live 2026-10-13:
+    # ProductVariantsBulkInput.price is a bare decimal string (e.g. "9.99"),
+    # not a {amount, currencyCode} object - Shopify rejected the object
+    # shape as "invalid money" - so the amount is simply interpreted in
+    # whatever currency the store itself is configured with. There was
+    # never a real currency_code setting to wire in here; the one that used
+    # to exist on this class was dead code (stored, never read) and has
+    # been removed.
     _PRODUCT_CREATE = """
     mutation ProductCreateWithImages($title: String!, $descriptionHtml: String, $media: [CreateMediaInput!], $metafields: [MetafieldInput!]) {
       productCreate(
@@ -155,6 +158,9 @@ class RealShopifyClient(ShopifyClient):
                   name
                   quantity
                   originalUnitPriceSet { shopMoney { amount currencyCode } }
+                  product {
+                    metafield(namespace: "nexus_commerce", key: "cj_product_id") { value }
+                  }
                 }
               }
             }
@@ -163,6 +169,9 @@ class RealShopifyClient(ShopifyClient):
               address1
               city
               countryCodeV2
+              province
+              zip
+              phone
             }
           }
         }
@@ -235,7 +244,7 @@ class RealShopifyClient(ShopifyClient):
     # - roughly 24h, so this project re-authenticates per process rather
     # than persisting a token, same as it already does for CJ.
 
-    def __init__(self, shop_url: str, client_id: str, client_secret: str, api_version: str, currency_code: str = "USD"):
+    def __init__(self, shop_url: str, client_id: str, client_secret: str, api_version: str):
         import shopify
 
         self._shopify = shopify
@@ -243,7 +252,6 @@ class RealShopifyClient(ShopifyClient):
         self._client_id = client_id
         self._client_secret = client_secret
         self._api_version = api_version
-        self._currency_code = currency_code
         self._access_token: str | None = None
 
     def _get_access_token(self) -> str:
@@ -292,6 +300,18 @@ class RealShopifyClient(ShopifyClient):
                     "name": li["node"]["name"],
                     "quantity": li["node"]["quantity"],
                     "price": li["node"]["originalUnitPriceSet"]["shopMoney"]["amount"],
+                    # Found live 2026-10-14: this was never fetched at all,
+                    # so order_fulfillment.py's CJ_ORDER proposals carried
+                    # no way to know which CJ product to re-order for a
+                    # real paid order - see src/workflows/executor.py. Same
+                    # metafield create_product() already writes (verified,
+                    # see "Product get with metafields"), read via the line
+                    # item's own product reference - a deleted/custom line
+                    # item has no "product" at all, so this defaults to ""
+                    # rather than crashing.
+                    "cj_product_id": (
+                        (li["node"].get("product") or {}).get("metafield") or {}
+                    ).get("value", ""),
                 }
                 for li in node["lineItems"]["edges"]
             ]
@@ -308,6 +328,16 @@ class RealShopifyClient(ShopifyClient):
                         "address1": shipping_address.get("address1"),
                         "city": shipping_address.get("city"),
                         "country_code": shipping_address.get("countryCodeV2"),
+                        # Found live 2026-10-14: CJ's create_order() already
+                        # reads "province"/"zip"/"phone" from this dict (see
+                        # cj_client.py), but this query never asked Shopify
+                        # for them - every real CJ order so far would have
+                        # sent empty strings for all three. Verified real
+                        # field names from shopify.dev's own MailingAddress
+                        # schema (province/zip/phone, not a guess).
+                        "province": shipping_address.get("province"),
+                        "zip": shipping_address.get("zip"),
+                        "phone": shipping_address.get("phone"),
                     } if shipping_address else {},
                 )
             )

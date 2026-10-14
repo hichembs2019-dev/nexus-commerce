@@ -44,10 +44,45 @@ class Executor:
             # guess about the others.
             supplier_name = payload.get("supplier", "cj")
             supplier = self._suppliers.get(supplier_name)
+            # Found live 2026-10-14: this read payload["product_id"] and
+            # payload["quantity"] directly, but order_fulfillment.py's real
+            # payload never carried either key at the top level - only a
+            # "line_items" list (one per distinct product in the Shopify
+            # order). This would have raised a real KeyError on the very
+            # first real paid order ever processed, never caught because
+            # the e2e test only exercises DRY_RUN, which never reaches this
+            # code. CJClient.create_order() supports exactly one
+            # product/quantity pair per call - a genuine order with more
+            # than one distinct product is a real scope gap, surfaced
+            # clearly here rather than silently fulfilling only the first.
+            line_items = payload.get("line_items") or []
+            if len(line_items) != 1:
+                raise RuntimeError(
+                    f"CJ_ORDER proposal {proposal.id} has {len(line_items)} line items - "
+                    "only single-item orders can be placed with the supplier automatically; "
+                    "see src/workflows/executor.py"
+                )
+            item = line_items[0]
+            cj_product_id = item.get("cj_product_id")
+            if not cj_product_id:
+                raise RuntimeError(
+                    f"CJ_ORDER proposal {proposal.id}'s line item has no cj_product_id - "
+                    "the Shopify product was not published with the nexus_commerce/cj_product_id "
+                    "metafield, so the supplier it should be reordered from cannot be determined"
+                )
+            # Closes the other documented gap (docs/UNVERIFIED.md
+            # "create_order(): orderNumber is generated locally"):
+            # CJClient.create_order() already reads shipping_address's own
+            # "order_number" key as the real CJ orderNumber when present
+            # (cj_client.py), it just never received one - the real
+            # Shopify order id traces the CJ order back to its origin
+            # instead of a locally-generated uuid4 with no real meaning.
+            shipping_address = dict(payload["shipping_address"])
+            shipping_address.setdefault("order_number", payload.get("shopify_order_id"))
             cj_order_id = supplier.create_order(
-                product_id=payload["product_id"],
-                quantity=payload["quantity"],
-                shipping_address=payload["shipping_address"],
+                product_id=cj_product_id,
+                quantity=item["quantity"],
+                shipping_address=shipping_address,
             )
             return {
                 "success": True,

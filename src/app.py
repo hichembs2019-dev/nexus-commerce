@@ -51,7 +51,6 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
             settings.shopify_client_id,
             settings.shopify_client_secret,
             settings.shopify_api_version,
-            settings.shopify_currency_code,
         )
     else:
         if not force_mocks:

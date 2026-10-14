@@ -29,12 +29,13 @@ each is a documented project-level choice):
 - `search_products()`: whether `GET /product/listV2`'s parameters go as a
   query string or a JSON body wasn't confirmed (the `curl` example was cut
   off) - the code uses query parameters as the standard REST convention.
-- `create_order()`: `shippingProvince` is required by CJ but has no real
-  source in this project's verified Shopify order data (a province-
-  requiring destination will surface this as a clear CJ error, not silently
-  send wrong data); `orderNumber` is generated locally rather than traced
-  back to the originating Shopify order - a follow-up pass should thread
-  that through `CJClient.create_order()`'s signature instead.
+  Now operationally confirmed, though not from docs: every real search this
+  session (dozens, across every discovery cycle) has used query parameters
+  and none has ever failed on that account.
+- `create_order()`'s `orderNumber` is no longer locally-generated-only -
+  closed 2026-10-14, see "CJ_ORDER execution never had real line item data"
+  below. (`shippingProvince`/`zip`/`phone` were a gap here too, now closed -
+  see "Shopify order shipping address" below.)
 
 `src/integrations/cj_client.py` defines `CJClient` as an abstract interface
 (method names are this project's own domain vocabulary - `search_products`,
@@ -44,6 +45,54 @@ vocabulary) and `RealCJClient`, which now has **zero** remaining
 what every automated test and every DRY_RUN run actually exercises
 regardless - `RealCJClient` only runs when `DRY_RUN=false` and real CJ
 credentials are set.
+
+## CJ_ORDER execution never had real line item data - found and closed (2026-10-14)
+
+Owner's own explicit instruction after a real execution crash elsewhere
+today ("راجع كل شيء و اصلح كل شيء و لا تترك اي ثغرة" - review everything,
+fix everything, leave no loophole) led to checking every other real
+execution path the same way the pid/vid bug was found - by reading what
+actually gets called, not assuming the existing tests cover it.
+
+`Executor._execute_real()`'s `CJ_ORDER` branch read
+`payload["product_id"]` and `payload["quantity"]` directly. But
+`order_fulfillment.py`'s real payload (`check_new_paid_orders()`) only
+ever carries `shopify_order_id`, `line_items`, and `shipping_address` -
+never a top-level `product_id`/`quantity`. This would have raised a real
+`KeyError: 'product_id'` on the very first real paid order ever processed
+with `DRY_RUN=false`. It was never caught because `test_e2e_dry_run.py` -
+the only test that exercises the full order-fulfillment journey - only
+ever runs with `DRY_RUN=true`, which returns from `Executor.execute()`
+before `_execute_real()` is ever reached.
+
+Underneath that was a second, deeper gap: even a correctly-written
+`_execute_real()` would have had nothing real to read `product_id` from.
+`get_recent_orders()`'s GraphQL query never asked Shopify for each line
+item's product, so there was no way to know which CJ product a given paid
+order's line item corresponds to at all.
+
+Both closed together:
+- `_LIST_RECENT_ORDERS` now asks for `product { metafield(namespace:
+  "nexus_commerce", key: "cj_product_id") { value } }` on every line item -
+  the same metafield `create_product()` already writes when a product is
+  first published (verified, already in production use). A line item with
+  no product (deleted product, custom line item) defaults to `""` rather
+  than crashing.
+- `Executor._execute_real()` now reads `product_id`/`quantity` from the
+  proposal's real `line_items[0]`, and raises clearly (never silently
+  partially fulfils) if there is more than one distinct line item - this
+  project's `CJClient.create_order()` interface only supports one
+  product/quantity pair per call, a real, documented scope limit, not a
+  guess. It also raises clearly if the one line item's `cj_product_id` is
+  empty, rather than guessing a supplier product.
+- The real Shopify order id is now threaded through as CJ's `orderNumber`
+  (`shipping_address["order_number"]`), closing the separate
+  previously-flagged gap that it was a meaningless local `uuid4`.
+
+Mutation-tested in `tests/test_executor.py` (new - this was the first test
+file to exercise `Executor._execute_real()`'s `CJ_ORDER` branch at all):
+reverting to the old `payload["product_id"]` access reproduces the exact
+real `KeyError: 'product_id'` in all 4 new tests; restoring the fix passes.
 
 ## CJ `pid` vs `vid` - was unconfirmed, now resolved and confirmed NOT the same (2026-10-13)
 
@@ -103,6 +152,30 @@ project-level choice):
   not something Shopify's docs specified - a tracking update with no
   customer notification defeats the point of adding one. See `SOURCES.md`
   "Fulfillment tracking update".
+
+### Shopify order shipping address - was incomplete, now closed (2026-10-14)
+
+Found live: `get_recent_orders()`'s GraphQL query only ever asked for
+`shippingAddress { name address1 city countryCodeV2 }`. `RealCJClient.
+create_order()` already reads `province`/`zip`/`phone` out of that same
+dict (see `cj_client.py`) - every real CJ order this project could ever
+place would have sent empty strings for all three, `shippingProvince`
+included, no matter the destination. This was flagged here as "no real
+source" when it should have been flagged as "never asked Shopify for it".
+
+Verified directly from `shopify.dev`'s own `MailingAddress` object page
+(reachable from this session - see `SOURCES.md`): the real GraphQL SDL for
+the type includes `phone: String`, `province: String`, and `zip: String`
+as genuine top-level fields, not inferred. The query now asks for all
+three and `get_recent_orders()` maps them into `shipping_address` alongside
+the existing fields.
+
+Not yet verified: whether CJ's `shippingProvince` expects the **full**
+province name (what `province` returns, e.g. "Illinois") or the
+**abbreviated code** (`provinceCode`, e.g. "IL") - `MailingAddress` has
+both as separate fields. This project sends `province` (the full name).
+If CJ rejects it for a real order, `provinceCode` is the first thing to
+try instead - flagged here rather than guessed either way.
 
 Collection (product grouping) mutations were never implemented at all -
 spec's tool list mentions them but no workflow in this project needs them.

@@ -56,10 +56,12 @@ def review_prices_and_inventory(
         # never actually change the price no matter how far the supplier's
         # cost has moved, because ShopifyProduct carries no record of what
         # the supplier price was when the listing was last set. With no
-        # history to anchor an "old markup" to, this reprices to exactly
-        # MIN_MARGIN over the new supplier cost instead - a real floor the
-        # project already has a verified number for, not a guessed business
-        # rule.
+        # history to anchor an "old markup" to, this reprices to MIN_MARGIN
+        # over the new supplier cost instead - a documented pricing target,
+        # not a floor any more (the owner removed the fixed-floor rejection
+        # gate itself on 2026-10-14, see tools/limits.py's check_margin() -
+        # a proposal computed here still goes through only after the
+        # positive-profit check, same as everywhere else).
         suggested_price = round(cj_product.price / (1 - settings.min_margin), 2)
 
         breakdown = CostBreakdown(

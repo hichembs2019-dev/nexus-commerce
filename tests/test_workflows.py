@@ -146,11 +146,29 @@ def test_a_real_shipping_quote_is_included_in_the_margin_calculation(conn, setti
     assert proposals[0].payload["cost_breakdown"]["shipping_cost"] == 1.0
 
 
-def test_a_shipping_cost_too_high_for_min_margin_is_skipped(conn, settings, cj, suppliers, web_search):
-    # price=5.0 -> sale_price=10.0 (2x markup); a $4 shipping quote drops
-    # margin to (10 - 5 - 4) / 10 = 10%, below the default 25% MIN_MARGIN.
+def test_a_thin_but_real_margin_is_proposed_not_skipped(conn, settings, cj, suppliers, web_search):
+    # Owner's explicit instruction, 2026-10-14: no fixed MIN_MARGIN floor any
+    # more - only "is this even profitable" matters. price=5.0 ->
+    # sale_price=10.0 (2x markup); a $4 shipping quote drops margin to
+    # (10 - 5 - 4) / 10 = 10%, which the old 25% MIN_MARGIN floor would have
+    # auto-skipped before any agent ever saw it - it must now be proposed.
     cj.catalog.append(CJProduct(product_id="CJ-1", title="Phone Case", price=5.0))
     cj.shipping_costs[("CJ-1", "US")] = 4.0
+
+    proposals = discover_new_products(
+        conn, suppliers, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0].status == ProposalStatus.CONSENSUS_REACHED.value
+
+
+def test_a_shipping_cost_that_erases_all_profit_is_still_skipped(conn, settings, cj, suppliers, web_search):
+    # price=5.0 -> sale_price=10.0 (2x markup); a $5 shipping quote drops
+    # margin to (10 - 5 - 5) / 10 = 0% - zero profit is still not worth
+    # proposing, even under the new "no fixed floor" policy.
+    cj.catalog.append(CJProduct(product_id="CJ-1", title="Phone Case", price=5.0))
+    cj.shipping_costs[("CJ-1", "US")] = 5.0
 
     proposals = discover_new_products(
         conn, suppliers, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]

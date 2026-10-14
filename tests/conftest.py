@@ -32,8 +32,6 @@ def conn(tmp_path):
 def settings(tmp_path) -> Settings:
     return Settings(
         database_path=str(tmp_path / "test.db"),
-        max_order_cost=200.0,
-        daily_spend_limit=500.0,
         min_margin=0.25,
         dry_run=True,
     )

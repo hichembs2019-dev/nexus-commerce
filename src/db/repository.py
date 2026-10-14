@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date
 
 from .models import AgentVote, Proposal
 
@@ -185,18 +184,6 @@ def get_orders_with_cj_order(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def today_executed_spend(conn: sqlite3.Connection, today: date | None = None) -> float:
-    """Sum of cost for proposals actually executed today - what
-    DAILY_SPEND_LIMIT is checked against. Only 'executed' counts: a rejected
-    or still-pending proposal never spent anything.
-    """
-    day = (today or date.today()).isoformat()
-    row = conn.execute(
-        """SELECT COALESCE(SUM(cost), 0) AS total FROM proposals
-           WHERE status = 'executed' AND date(updated_at) = ?""",
-        (day,),
-    ).fetchone()
-    return float(row["total"])
 
 
 def _row_to_proposal(row: sqlite3.Row) -> Proposal:

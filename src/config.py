@@ -73,9 +73,12 @@ class Settings:
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
-    # Safety limits (spec SS4)
-    max_order_cost: float = 200.0
-    daily_spend_limit: float = 500.0
+    # Pricing (spec SS4/SS6). Owner's explicit instruction, 2026-10-14:
+    # MAX_ORDER_COST/DAILY_SPEND_LIMIT are removed entirely - see
+    # tools/limits.py's module docstring for why that is safe, not just
+    # permitted. MIN_MARGIN is no longer a reject-gate floor (any real
+    # positive profit passes, see tools/limits.py's check_margin()) - it
+    # survives only as price_inventory_review.py's own repricing target.
     min_margin: float = 0.25
 
     # Mode
@@ -139,8 +142,6 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         ),
         telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
-        max_order_cost=_float(os.environ.get("MAX_ORDER_COST"), 200.0),
-        daily_spend_limit=_float(os.environ.get("DAILY_SPEND_LIMIT"), 500.0),
         min_margin=_float(os.environ.get("MIN_MARGIN"), 0.25),
         dry_run=_bool(os.environ.get("DRY_RUN"), True),
         database_path=os.environ.get("DATABASE_PATH", "./nexus_commerce.db"),

@@ -1,18 +1,25 @@
 """Daily job (spec, widened by the owner's own later instruction): "اقتراح
 منتجات جديدة" - search *every registered supplier's* catalog (not just CJ -
 "الوكلاء... ليسوا محددين مع من يشتغلون"), do a little competitor research via
-the web-search tool, and propose publishing whichever candidate clears
-MIN_MARGIN with the best profit, from whichever supplier offers it. Every
-proposal still goes through submit_proposal() (limits -> 5-agent consensus)
+the web-search tool, and propose publishing whichever candidate is actually
+profitable, with the best profit, from whichever supplier offers it. Every
+proposal still goes through submit_proposal() (limits -> agent consensus)
 like everything else; this module only finds candidates and estimates a sale
 price for each.
+
+Owner's explicit instruction, 2026-10-14: no fixed minimum-margin
+percentage - a candidate is skipped only if it would not even be
+profitable (margin <= 0), never for having a real but thin margin. "فليس مع
+فليس يصبح كديس" (a penny with a penny becomes a bag) - the owner's own
+reasoning for why volume at a small margin is still worth proposing.
 
 Widening the SEARCH to every supplier is safe - it is read-only. It does not
 widen who actually gets PAID: a proposal sourced from a supplier whose client
 is still an honest NotImplementedError stub (see docs/UNVERIFIED.md) is still
-proposed and still goes through consensus + Telegram like any other, but its
-own execution will raise that same documented error rather than guessing an
-unverified API - exactly the discipline CJ's own RealCJClient already follows.
+proposed and still goes through consensus and autonomous execution like any
+other, but its own execution will raise that same documented error rather
+than guessing an unverified API - exactly the discipline CJ's own
+RealCJClient already follows.
 """
 from __future__ import annotations
 
@@ -29,9 +36,9 @@ from .pipeline import submit_proposal
 # Spec names "دراسة المنتجات والمنافسين" (studying products and
 # competitors) as a tool, not a pricing formula - this 2x-supplier-cost
 # markup is a simple, documented starting point, not a verified business
-# requirement. The actual decision still goes through MIN_MARGIN and the
-# 5-agent consensus either way, so a bad guess here is caught downstream,
-# not silently published.
+# requirement. The actual decision still goes through the profit-positive
+# check above and agent consensus either way, so a bad guess here is caught
+# downstream, not silently published.
 MARKUP_MULTIPLIER = 2.0
 
 # Found live 2026-10-13: shipping_cost was hardcoded to 0 here (the only
@@ -84,8 +91,8 @@ def discover_new_products(
                 shopify_fee=0,
                 payment_processing_fee=0,
             )
-            if margin(breakdown) < settings.min_margin:
-                continue  # not worth even proposing
+            if margin(breakdown) <= 0:
+                continue  # not even profitable - never "below an arbitrary floor"
 
             # Competitor research is informational only - counted in the
             # justification text, never read by the margin/price decision

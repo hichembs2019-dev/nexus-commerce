@@ -13,8 +13,11 @@ from src.workflows.pipeline import (
 from .conftest import all_approving_agents
 
 
-def test_submit_proposal_over_max_order_cost_is_auto_rejected_before_reaching_agents(conn, settings):
-    settings.max_order_cost = 100.0
+def test_submit_proposal_cj_order_has_no_spending_cap_however_large_the_cost(conn, settings):
+    # Owner's explicit instruction, 2026-10-14: "ليس هناك سقف الانفاق مادام
+    # الزبون هو من يدفع" - a CJ_ORDER proposal is always backed by a
+    # Shopify order already reported as paid, so there is no cost ceiling
+    # any more, however large - a real regression test for that removal.
     agents = all_approving_agents()
 
     proposal = submit_proposal(
@@ -22,16 +25,15 @@ def test_submit_proposal_over_max_order_cost_is_auto_rejected_before_reaching_ag
         action_type=ActionType.CJ_ORDER.value,
         payload={"shopify_order_id": "1001"},
         justification="test",
-        cost=150.0,
+        cost=1_000_000.0,
         risk="low",
         proposed_by="test",
         settings=settings,
         agents=agents,
     )
 
-    assert proposal.status == ProposalStatus.AUTO_REJECTED.value
-    # Never reached the agents at all.
-    assert repository.get_votes_for_round(conn, proposal.id, 1) == []
+    assert proposal.status == ProposalStatus.CONSENSUS_REACHED.value
+    assert len(repository.get_votes_for_round(conn, proposal.id, 1)) == len(AGENT_NAMES)
 
 
 def test_submit_proposal_within_limits_runs_full_consensus(conn, settings):
@@ -53,8 +55,9 @@ def test_submit_proposal_within_limits_runs_full_consensus(conn, settings):
     assert len(repository.get_votes_for_round(conn, proposal.id, 1)) == len(AGENT_NAMES)
 
 
-def test_submit_proposal_with_low_margin_cost_breakdown_is_auto_rejected(conn, settings):
-    settings.min_margin = 0.5
+def test_submit_proposal_with_zero_profit_cost_breakdown_is_auto_rejected(conn, settings):
+    # Owner's explicit instruction, 2026-10-14: no fixed margin floor any
+    # more - only a real, fee-inclusive profit of zero or less is rejected.
     agents = all_approving_agents()
 
     proposal = submit_proposal(
@@ -64,7 +67,7 @@ def test_submit_proposal_with_low_margin_cost_breakdown_is_auto_rejected(conn, s
             "title": "x",
             "cost_breakdown": {
                 "sale_price": 100,
-                "product_cost": 90,
+                "product_cost": 100,
                 "shipping_cost": 0,
                 "shopify_fee": 0,
                 "payment_processing_fee": 0,
@@ -81,14 +84,53 @@ def test_submit_proposal_with_low_margin_cost_breakdown_is_auto_rejected(conn, s
     assert proposal.status == ProposalStatus.AUTO_REJECTED.value
 
 
+def test_submit_proposal_with_a_thin_but_real_margin_reaches_consensus(conn, settings):
+    # The exact case the owner said must now pass: only 5% margin, which the
+    # old 25% MIN_MARGIN floor would have auto-rejected before any agent
+    # ever saw it.
+    agents = all_approving_agents()
+
+    proposal = submit_proposal(
+        conn,
+        action_type=ActionType.PUBLISH_PRODUCT.value,
+        payload={
+            "title": "x",
+            "cost_breakdown": {
+                "sale_price": 100,
+                "product_cost": 95,
+                "shipping_cost": 0,
+                "shopify_fee": 0,
+                "payment_processing_fee": 0,
+            },
+        },
+        justification="test",
+        cost=0,
+        risk="low",
+        proposed_by="test",
+        settings=settings,
+        agents=agents,
+    )
+
+    assert proposal.status == ProposalStatus.CONSENSUS_REACHED.value
+
+
 def test_send_for_telegram_approval_requires_consensus_reached_first(conn, settings, telegram):
     agents = all_approving_agents()
     proposal = submit_proposal(
         conn,
-        action_type=ActionType.CJ_ORDER.value,
-        payload={},
+        action_type=ActionType.PUBLISH_PRODUCT.value,
+        payload={
+            "title": "x",
+            "cost_breakdown": {
+                "sale_price": 100,
+                "product_cost": 100,
+                "shipping_cost": 0,
+                "shopify_fee": 0,
+                "payment_processing_fee": 0,
+            },
+        },
         justification="t",
-        cost=1000000.0,  # guaranteed over MAX_ORDER_COST -> auto_rejected
+        cost=0,
         risk="low",
         proposed_by="test",
         settings=settings,
@@ -179,8 +221,15 @@ def test_handle_telegram_decision_rejects_a_proposal_not_awaiting_telegram(conn,
 def test_execute_autonomously_requires_consensus_reached_first(conn, settings, telegram, executor):
     agents = all_approving_agents()
     proposal = submit_proposal(
-        conn, action_type=ActionType.CJ_ORDER.value, payload={}, justification="t",
-        cost=1000000.0, risk="low", proposed_by="test", settings=settings, agents=agents,
+        conn, action_type=ActionType.PUBLISH_PRODUCT.value,
+        payload={
+            "title": "x",
+            "cost_breakdown": {
+                "sale_price": 100, "product_cost": 100, "shipping_cost": 0,
+                "shopify_fee": 0, "payment_processing_fee": 0,
+            },
+        },
+        justification="t", cost=0, risk="low", proposed_by="test", settings=settings, agents=agents,
     )
     assert proposal.status == ProposalStatus.AUTO_REJECTED.value
 

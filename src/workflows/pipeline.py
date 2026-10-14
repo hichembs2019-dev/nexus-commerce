@@ -34,19 +34,26 @@ from ..agents.post_execution_review import review_execution
 from ..config import Settings
 from ..db import repository
 from ..db.models import ActionType, Proposal, ProposalStatus
-from ..tools.limits import LimitCheckResult, check_margin, check_order_limits
+from ..tools.limits import LimitCheckResult, check_margin
 from ..tools.profit_calculator import CostBreakdown
 from .executor import Executor
 
 
-def _check_limits(action_type: str, payload: dict, cost: float, conn: sqlite3.Connection, settings: Settings) -> LimitCheckResult:
+def _check_limits(action_type: str, payload: dict) -> LimitCheckResult:
+    # Owner's explicit instruction, 2026-10-14: no spending cap on CJ_ORDER
+    # ("ليس هناك سقف الانفاق مادام الزبون هو من يدفع" - no spending cap since
+    # it's the customer who pays). This is actually safe to remove, not just
+    # permitted: order_fulfillment.py only ever creates a CJ_ORDER proposal
+    # for a Shopify order whose financial_status Shopify itself already
+    # reports as "paid" (check_payment_confirmed, enforced there before this
+    # function is ever reached) - the money being spent here is always
+    # revenue already received, never a speculative purchase.
     if action_type == ActionType.CJ_ORDER.value:
-        already_spent = repository.today_executed_spend(conn)
-        return check_order_limits(cost, already_spent, settings)
+        return LimitCheckResult(allowed=True)
 
     if "cost_breakdown" in payload:
         breakdown = CostBreakdown(**payload["cost_breakdown"])
-        return check_margin(breakdown, settings)
+        return check_margin(breakdown)
 
     return LimitCheckResult(allowed=True)
 
@@ -73,7 +80,7 @@ def submit_proposal(
         proposed_by=proposed_by,
     )
 
-    limit_result = _check_limits(action_type, payload, cost, conn, settings)
+    limit_result = _check_limits(action_type, payload)
     if not limit_result.allowed:
         repository.update_proposal_status(conn, proposal.id, ProposalStatus.AUTO_REJECTED.value)
         repository.audit(

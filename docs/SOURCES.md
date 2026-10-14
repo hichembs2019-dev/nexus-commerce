@@ -1393,3 +1393,77 @@ first asked, per the owner's own correction above.
   - Full suite: 149 passed (up from 142 before this change) after every
     revert/restore cycle above, run directly with
     `python -m pytest -q`.
+
+## No spending cap, no fixed margin floor - owner's explicit instruction, 2026-10-14
+
+Same day as the full-autonomy change above, in direct follow-up. Owner's own
+words: "ليس هناك حدود للارباح، المهم هناك ربح... ليس هناك سقف الانفاق مادام \
+الزبون هو من يدفع" (no limit on profit, what matters is there IS profit...
+no spending cap since it's the customer who pays), "فليس مع فليس يصبح كديس"
+(a Tunisian proverb: penny with penny becomes a bag - volume makes a small
+margin worthwhile), and a concrete example given directly: a product that
+sells for 49.99 in the market, sourced at 30.99, sold at 42.99 (undercutting
+the market) with a platform fee of 7 - "الربح 5 كافية لانهم يستغلون السوق"
+(a profit of 5 is enough because they're seizing the market opportunity).
+
+- `src/tools/limits.py`: `check_order_cost`/`check_daily_spend`/
+  `check_order_limits` (and the `MAX_ORDER_COST`/`DAILY_SPEND_LIMIT`
+  settings they read) are deleted outright, not just unused - a CJ_ORDER
+  proposal is only ever created by `order_fulfillment.py` for a Shopify
+  order Shopify itself already reports `financial_status=paid` for
+  (enforced by `check_payment_confirmed`, unchanged), so the money being
+  spent is always revenue already received - there was never a real
+  scenario where a spending cap protected the owner's own money. `src/db/
+  repository.py`'s `today_executed_spend()` (the function that function
+  existed solely to total) is removed with it, along with its now-unused
+  `from datetime import date` import.
+- `check_margin(breakdown)` no longer takes a `min_margin` floor at all -
+  it now only checks `profit(breakdown) > 0` (real, fee-inclusive profit,
+  not a percentage). `src/tools/profit_calculator.py`'s `meets_min_margin()`
+  helper (never called by any real code path even before this change -
+  found while making this edit) is removed too.
+- `src/workflows/pipeline.py`'s `_check_limits()` returns
+  `LimitCheckResult(allowed=True)` unconditionally for every `CJ_ORDER`
+  proposal, and calls `check_margin(breakdown)` with no settings argument
+  for anything carrying a `cost_breakdown` - simplified from
+  `_check_limits(action_type, payload, cost, conn, settings)` to
+  `_check_limits(action_type, payload)` since the removed parameters were
+  genuinely unused once the two gates above were gone.
+- `src/workflows/new_product_discovery.py`'s own pre-filter (skip a
+  candidate "not worth even proposing") changed from
+  `margin(breakdown) < settings.min_margin` to `margin(breakdown) <= 0` -
+  a thin-but-real margin (the owner's own 49.99/30.99/42.99 example) is now
+  proposed, not silently dropped before any agent ever saw it.
+- `src/workflows/price_inventory_review.py`'s repricing formula
+  (`cj_product.price / (1 - settings.min_margin)`) is UNCHANGED - this is
+  a pricing *target* (what to reprice to after a supplier cost change),
+  not a reject gate, and the owner did not ask for a different target
+  number; only its comment is updated to say so explicitly, since the
+  field it reads (`settings.min_margin`) is now easy to mistake for the
+  removed reject-floor with the same name.
+- `src/config.py`: `max_order_cost`/`daily_spend_limit` fields and their
+  env loading are removed from `Settings`; `min_margin` stays (still read
+  by the repricing formula above). `.env`/`.env.example` updated to match.
+- `src/agents/prompts.py`: the system prompt's own description of the
+  pre-agent gates is rewritten to match (no more `MAX_ORDER_COST`/
+  `DAILY_SPEND_LIMIT`/fixed `MIN_MARGIN` floor claimed to the agents), and
+  a line is added encoding the owner's own pricing philosophy directly:
+  undercutting competitors ("تكسير السوق") is a deliberate, good strategy
+  as long as real profit stays positive, volume making up for a thin
+  margin.
+- Mutation-tested: reinstating a $200 CJ_ORDER cap made
+  `test_submit_proposal_cj_order_has_no_spending_cap_however_large_the_cost`
+  fail with the exact old symptom (`auto_rejected` instead of
+  `consensus_reached`) for a $1,000,000 order; reinstating a 25% margin
+  floor made four separate tests fail
+  (`test_a_thin_but_real_positive_profit_is_allowed`,
+  `test_zero_profit_is_rejected`,
+  `test_submit_proposal_with_a_thin_but_real_margin_reaches_consensus`,
+  `test_a_thin_but_real_margin_is_proposed_not_skipped`), each showing the
+  exact old `auto_rejected`/`margin too low` symptom. Both reverted and
+  restored to green.
+- Full suite: 143 passed (net down from 149 because six tests whose entire
+  premise was the removed gates - `check_order_cost`/`check_daily_spend`/
+  `check_order_limits` and `meets_min_margin`'s own unit tests - no longer
+  exist to test anything; new tests were added for the replacement
+  behaviour in the same files).

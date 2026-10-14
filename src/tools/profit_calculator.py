@@ -34,13 +34,9 @@ def profit(breakdown: CostBreakdown) -> float:
 def margin(breakdown: CostBreakdown) -> float:
     """profit as a fraction of sale price. Zero or negative sale_price has
     no meaningful margin - treated as the worst possible margin (-inf) so it
-    always fails a MIN_MARGIN check rather than raising or being silently
-    treated as acceptable.
+    always fails a positive-profit check rather than raising or being
+    silently treated as acceptable.
     """
     if breakdown.sale_price <= 0:
         return float("-inf")
     return profit(breakdown) / breakdown.sale_price
-
-
-def meets_min_margin(breakdown: CostBreakdown, min_margin: float) -> bool:
-    return margin(breakdown) >= min_margin

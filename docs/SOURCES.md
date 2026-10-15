@@ -1573,3 +1573,37 @@ new scopes to an existing install.
   call sequence itself, not just a field value, is what the tests pin down.
 - Full suite: 146 passed (up from 143 - four new tests, one pre-existing
   test extended with two more assertions on the new calls).
+
+## Market no longer restricted to Italy - owner's explicit instruction, 2026-10-15
+
+Owner's own words, after seeing the real store full of Italian-only
+listings: "دخلت و رايت الشغل في ايطاليا و بس و انا طلبت منك في كل الكرة
+الارضية مادام هناك منصات تجارة و ارباح، لم اقل لك يقتصر على اي بلد معين"
+(I went in and saw the work was Italy-only, and I asked you for the whole
+globe, as long as there are commerce platforms and profit - I never said
+to restrict it to any specific country).
+
+The Italian-only mandate was never a technical constraint anywhere in the
+codebase - a single grep for "إيطالي"/"Italian"/"Italia" across `src/`
+found exactly one place: a bullet in `AGENT_SYSTEM_PROMPT`
+(`src/agents/prompts.py`) instructing every agent to always translate
+every listing to Italian. That bullet is rewritten: no assumed customer
+language or country, English as the safe global-commerce default, with
+room for the agents to localize differently when their own competitor
+research or the product itself clearly points to a specific market - not
+hardcoded, not guessed, left to the same real business judgement the rest
+of that prompt already asks for.
+
+No other code change was needed or made - `_suggest_sale_price()`'s 2x
+markup, `SHIPPING_ESTIMATE_COUNTRY = "US"` (a shipping-quote reference
+point only, not a customer-facing restriction, see
+new_product_discovery.py's own docstring), and every Shopify/CJ client
+method were already country-agnostic. The store's own currency/market
+configuration (EUR, confirmed live earlier - see "Variant price update")
+is a Shopify Admin setting, not something this app's code sets or could
+reasonably override; a full multi-market/multi-currency Shopify Markets
+setup is a larger, separate feature not asked for here.
+
+This is a prompt-text-only change with no branching logic to mutation-test
+- the existing 146 tests, none of which asserted the old Italian-only
+wording, still pass unchanged.

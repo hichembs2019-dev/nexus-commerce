@@ -52,12 +52,14 @@ class RealGeminiReasoningClient(AgentReasoningClient):
         self._client = genai.Client(api_key=api_key)
         self._model = model
         # Owner's own real key, added live 2026-10-14 right after Gemini's
-        # real error rate spiked (see docs/SOURCES.md "Groq fallback") - a
-        # second, independent provider to fall back to once Gemini's own
-        # retries are exhausted, rather than giving up and auto-rejecting.
-        # Never mixed mid-round the way src/app.py already documents not
-        # mixing Gemini/Anthropic - this is the SAME agent's own call
-        # falling back, not a different agent using a different provider.
+        # real error rate spiked (see docs/SOURCES.md "Groq fallback").
+        # Since 2026-10-15 Gemini is no longer the primary provider (see
+        # RealGroqReasoningClient's own docstring) - this `fallback` is now
+        # used only when Gemini itself is deliberately selected as primary
+        # (e.g. Groq not configured). Never mixed mid-round the way
+        # src/app.py already documents not mixing Gemini/Anthropic - this
+        # is the SAME agent's own call falling back, not a different agent
+        # using a different provider.
         self._fallback = fallback
 
     # Found live 2026-10-13 (see docs/SOURCES.md): roughly half of real
@@ -107,34 +109,50 @@ class RealGroqReasoningClient(AgentReasoningClient):
     key returned a real 200 and the standard OpenAI-compatible
     choices[0].message.content shape (confirmed against the real
     /v1/models list first - "llama-3.3-70b-versatile" doesn't exist for
-    this key, "openai/gpt-oss-120b" does). Used both as
-    RealGeminiReasoningClient's own fallback and standalone if Gemini isn't
-    configured - see src/app.py.
+    this key, "openai/gpt-oss-120b" does).
+
+    Owner's explicit instruction, 2026-10-15, after watching the real
+    production logs: Gemini's real error rate (500s and 429s) was so high
+    that Groq - which answered 200 OK every single time in that same
+    window - was carrying almost every real vote anyway through
+    RealGeminiReasoningClient's own fallback. "ضع جيميني احتياطي و استعمل
+    الاخر" (make Gemini the backup, use the other one) - so the roles are
+    swapped: Groq is primary (see src/app.py), with Gemini as ITS fallback
+    now, via the same `fallback` pattern Gemini already used the other way
+    around. Still never a different provider for a different agent
+    mid-round - the same single-agent-call-extends-its-own-retry-chain
+    discipline documented on RealGeminiReasoningClient below.
     """
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, fallback: AgentReasoningClient | None = None):
         self._api_key = api_key
         self._model = model
+        self._fallback = fallback
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         import httpx
 
-        response = httpx.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
-            json={
-                "model": self._model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-            },
-            timeout=30,
-        )
-        payload = response.json()
-        if "error" in payload:
-            raise RuntimeError(f"Groq completion failed: {payload['error'].get('message')}")
-        return payload["choices"][0]["message"]["content"] or ""
+        try:
+            response = httpx.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": self._model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                },
+                timeout=30,
+            )
+            payload = response.json()
+            if "error" in payload:
+                raise RuntimeError(f"Groq completion failed: {payload['error'].get('message')}")
+            return payload["choices"][0]["message"]["content"] or ""
+        except Exception:
+            if self._fallback is not None:
+                return self._fallback.complete(system_prompt, user_prompt)
+            raise
 
 
 class MockAgentReasoningClient(AgentReasoningClient):

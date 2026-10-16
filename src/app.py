@@ -90,23 +90,27 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
     # Agent count is len(AGENT_NAMES) in src/agents/agent.py (2, as of the
     # owner's 2026-10-14 experiment - see that module's docstring).
     agent_count = len(AGENT_NAMES)
-    if not force_mocks and settings.gemini_configured:
-        # Groq (owner's real key, added live 2026-10-14 - see docs/SOURCES.md
-        # "Groq fallback") is each Gemini call's OWN fallback once Gemini's
-        # own retries are exhausted - never a different provider for a
-        # different agent mid-round, which is exactly the mixing documented
-        # above as unsafe. A fresh RealGroqReasoningClient per agent, same as
-        # every other reasoning client here.
-        groq_fallback = (
-            RealGroqReasoningClient(settings.groq_api_key, settings.groq_model) if settings.groq_configured else None
+    # Owner's explicit instruction, 2026-10-15, after watching the real
+    # production logs: Gemini's real error rate (500/429) was so high that
+    # Groq - 200 OK every single time in that same window - was already
+    # carrying almost every real vote through Gemini's own fallback anyway.
+    # "ضع جيميني احتياطي و استعمل الاخر" - Groq is now primary, with Gemini
+    # as ITS fallback, the exact mirror of the wiring this had before. Same
+    # single-agent-own-retry-chain discipline either way - never a
+    # different provider for a different agent mid-round.
+    if not force_mocks and settings.groq_configured:
+        gemini_fallback = (
+            RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model)
+            if settings.gemini_configured
+            else None
         )
         reasoning_clients: list[AgentReasoningClient] = [
-            RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model, fallback=groq_fallback)
+            RealGroqReasoningClient(settings.groq_api_key, settings.groq_model, fallback=gemini_fallback)
             for _ in range(agent_count)
         ]
-    elif not force_mocks and settings.groq_configured:
+    elif not force_mocks and settings.gemini_configured:
         reasoning_clients = [
-            RealGroqReasoningClient(settings.groq_api_key, settings.groq_model) for _ in range(agent_count)
+            RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model) for _ in range(agent_count)
         ]
     elif not force_mocks and settings.anthropic_configured:
         reasoning_clients = [

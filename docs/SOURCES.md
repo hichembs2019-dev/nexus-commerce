@@ -1607,3 +1607,44 @@ setup is a larger, separate feature not asked for here.
 This is a prompt-text-only change with no branching logic to mutation-test
 - the existing 146 tests, none of which asserted the old Italian-only
 wording, still pass unchanged.
+
+## Groq promoted to primary, Gemini demoted to its fallback - 2026-10-15
+
+Owner watched the real production logs directly (a `docker compose logs`
+screenshot) and saw Gemini (`gemma-4-26b-a4b-it`) returning `500 Internal
+Server Error` and `429 Too Many Requests` on nearly every call in that
+window, with Groq answering `200 OK` every single time it was reached
+through Gemini's own fallback. Instruction: "ضع جيميني احتياطي و استعمل
+الاخر" (make Gemini the backup, use the other one).
+
+- `RealGroqReasoningClient` gained the same `fallback: AgentReasoningClient
+  | None` parameter `RealGeminiReasoningClient` already had, with the same
+  behavior: on any exception (network error, non-200, or the `{"error":
+  ...}` body shape already handled), fall back to the given client instead
+  of raising, with no fallback configured preserving the old
+  raise-on-failure behavior exactly.
+- `src/app.py`'s `build_app()` provider-selection order is inverted: Groq
+  is now tried first (with Gemini as its fallback if configured), Gemini
+  only runs standalone if Groq isn't configured at all. Still the same
+  non-negotiable rule documented here since 2026-10-13: never a different
+  provider for a different agent mid-round - a fallback only ever extends
+  the SAME agent's SAME call's own retry chain.
+- Mutation-tested: removing the try/except around Groq's HTTP call made
+  `test_groq_complete_falls_back_to_a_real_second_provider_on_error` fail
+  with the raw `RuntimeError("boom")` instead of the fallback's answer,
+  then restored to green.
+- Full suite: 148 passed (up from 146 - two new Groq-fallback tests).
+
+## HOURLY_INTERVAL_MINUTES reverted from 1 back to 60 - 2026-10-15
+
+Same real-logs review: `WARNING:apscheduler.scheduler:... skipped: maximum
+number of running instances reached (1)` appeared repeatedly - at the
+1-minute cadence the owner set on 2026-10-14 to rehearse the whole
+pipeline quickly, a single hourly/daily job pass (many agent consensus
+rounds, each possibly retrying a slow/failing reasoning provider) was
+routinely taking longer than 60 seconds, so APScheduler's default
+max_instances=1 silently skipped the next tick rather than overlapping
+it. Owner's instruction: "ضعه كل ساعة" (set it to every hour) - back to
+the project's own original default. `.env`'s `HOURLY_INTERVAL_MINUTES` is
+60 again; this is a deployment-config change, not a code change, so
+nothing in `src/` was touched and no test is affected.

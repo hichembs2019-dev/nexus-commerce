@@ -279,3 +279,48 @@ def test_groq_complete_raises_clearly_on_a_real_error_response(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Groq completion failed"):
         client.complete("sys", "user")
+
+
+def test_groq_complete_falls_back_to_a_real_second_provider_on_error(monkeypatch):
+    # Owner's explicit instruction, 2026-10-15, after watching real
+    # production logs where Gemini's error rate made it unreliable as the
+    # primary - Groq is now primary (src/app.py), with Gemini as ITS
+    # fallback, the exact mirror of the wiring this had before.
+    def fake_post(url, *, headers, json, timeout):
+        raise RuntimeError("boom")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    class _FakeFallback:
+        def __init__(self):
+            self.calls = []
+
+        def complete(self, system_prompt, user_prompt):
+            self.calls.append((system_prompt, user_prompt))
+            return '{"vote": "approve", "reason": "from gemini fallback"}'
+
+    fallback = _FakeFallback()
+    client = RealGroqReasoningClient(api_key="fake-groq-key", model="openai/gpt-oss-120b", fallback=fallback)
+
+    result = client.complete("sys", "user")
+
+    assert result == '{"vote": "approve", "reason": "from gemini fallback"}'
+    assert fallback.calls == [("sys", "user")]
+
+
+def test_groq_complete_with_no_fallback_still_raises_on_error(monkeypatch):
+    def fake_post(url, *, headers, json, timeout):
+        raise RuntimeError("boom")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    client = RealGroqReasoningClient(api_key="fake-groq-key", model="openai/gpt-oss-120b")
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="boom"):
+        client.complete("sys", "user")

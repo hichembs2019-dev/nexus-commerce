@@ -53,6 +53,24 @@ def test_a_proposal_stuck_at_consensus_reached_executes_autonomously_on_the_swee
     assert app.telegram.notifications == []
 
 
+def test_the_sweep_respects_a_limit_and_leaves_the_rest_stuck_for_the_next_run(conn, settings, executor):
+    # Found live 2026-10-18 (GitHub Actions runs 39158203166, 39159056431):
+    # an unbounded sweep here was killed by the job's own wall-clock
+    # timeout before finishing, and leaves the rest stuck for the next
+    # run - which then tries to clear a bigger backlog, unbounded again.
+    # A limit must execute exactly that many and leave the remainder
+    # genuinely untouched (still consensus_reached), not merely claim to.
+    proposals = [_consensus_reached_proposal(conn) for _ in range(3)]
+    app = _make_app(conn, settings, executor)
+
+    executed_count = execute_stuck_consensus_reached_proposals(app, limit=2)
+
+    assert executed_count == 2
+    statuses = [repository.get_proposal(conn, p.id).status for p in proposals]
+    assert statuses.count(ProposalStatus.EXECUTED.value) == 2
+    assert statuses.count(ProposalStatus.CONSENSUS_REACHED.value) == 1
+
+
 def test_a_proposal_not_at_consensus_reached_is_left_untouched(conn, settings, executor):
     proposal = repository.create_proposal(
         conn, action_type="publish_product", payload={"title": "x"}, justification="t", cost=0, risk="low", proposed_by="test"

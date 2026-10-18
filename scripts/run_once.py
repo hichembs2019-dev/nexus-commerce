@@ -24,7 +24,19 @@ def main() -> None:
 
     app = build_app(settings)
 
-    resumed = execute_stuck_consensus_reached_proposals(app)
+    # Found live 2026-10-18 (GitHub Actions runs 39158203166, 39159056431):
+    # an unbounded sweep here, with real post_execution_review() calls
+    # costing ~50-100s each on the free Gemini tier, was killed by the
+    # job's own timeout before finishing - and a run killed mid-sweep
+    # leaves its own leftovers for the next run, compounding the backlog.
+    # This process exits right after one pass (unlike main.py's daemon),
+    # so a bounded limit lets every 10-minute firing make guaranteed
+    # progress and drain any backlog over several firings instead of
+    # risking the same timeout kill every single time. 5 * ~100s worst
+    # case = ~500s, leaving real headroom in the 20-minute job budget for
+    # run_hourly()'s own steps afterward.
+    STUCK_PROPOSAL_LIMIT_PER_RUN = 5
+    resumed = execute_stuck_consensus_reached_proposals(app, limit=STUCK_PROPOSAL_LIMIT_PER_RUN)
     if resumed:
         logger.warning("executed %d proposal(s) stuck at consensus_reached from before this run", resumed)
 

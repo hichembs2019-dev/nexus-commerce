@@ -83,7 +83,7 @@ def _execute_if_consensus_reached(app: App, proposal) -> None:
     # submit_proposal() itself - nothing further to do with them here.
 
 
-def execute_stuck_consensus_reached_proposals(app: App) -> int:
+def execute_stuck_consensus_reached_proposals(app: App, limit: int | None = None) -> int:
     """Found live 2026-10-14: a real agreed-upon proposal (#25) reached
     CONSENSUS_REACHED, but the process was restarted (deploying an urgent
     fix) before run_daily()'s own `for proposal in proposals:` loop - which
@@ -94,11 +94,29 @@ def execute_stuck_consensus_reached_proposals(app: App) -> int:
     decision the agents already agreed on. Renamed from
     resend_stuck_consensus_reached_proposals now that reaching consensus
     means executing immediately, not sending to Telegram for approval.
+
+    `limit`: found live 2026-10-18 on GitHub Actions (runs 39158203166 and
+    39159056431) - each real execution now ends with a real
+    post_execution_review() reasoning call that can take ~50-100 real
+    seconds on the free Gemini tier (Groq is 429'd account-wide). A run
+    that itself got cancelled mid-sweep leaves its own leftovers stuck for
+    the NEXT run to catch up on, so an unbounded sweep here compounds:
+    every cancelled run adds to a backlog the next run tries to clear in
+    one unbounded, un-timeboxed loop, and both real runs this looked at
+    were killed by the job's own timeout before finishing the sweep -
+    before run_hourly() ever even started. A `limit` makes every firing
+    do bounded, guaranteed real work and drain an arbitrarily large
+    backlog over several 10-minute firings instead of trying (and
+    failing) to clear it atomically in one. `None` keeps every existing
+    caller's behavior (main.py's long-running daemon has no wall-clock
+    deadline to protect) unbounded, unchanged.
     """
     from .db import repository
     from .db.models import ProposalStatus
 
     stuck = repository.get_proposals_by_status(app.conn, ProposalStatus.CONSENSUS_REACHED.value)
+    if limit is not None:
+        stuck = stuck[:limit]
     for proposal in stuck:
         _execute_if_consensus_reached(app, proposal)
     return len(stuck)

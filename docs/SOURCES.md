@@ -1996,3 +1996,40 @@ back via `get_job_logs`.
 - **Not yet confirmed**: whether a real run now completes end-to-end
   within 20 minutes and produces a real decision - the next triggered
   run is the proof, not this entry.
+
+## The real root cause was a compounding backlog, not just a short clock (2026-10-18)
+
+The 20-minute timeout above was not enough either - run `39159056431`
+was also killed (`##[error]The operation was canceled` at the 20:00
+mark), and its log explains why: the job's very first real step
+(`scripts/run_once.py`'s `execute_stuck_consensus_reached_proposals()`,
+which runs *before* `run_hourly()`) made **15 sequential real reasoning
+calls** (`post_execution_review()`, one per executed proposal) before
+being killed, with no CJ/Shopify HTTP call anywhere in the log - this
+run never even reached `run_hourly()`.
+
+- **Why this compounds**: `execute_stuck_consensus_reached_proposals()`
+  (`src/scheduler.py`) is an unbounded sweep over every `CONSENSUS_REACHED`
+  row in the persisted DB, written for a real but different bug
+  (2026-10-14, a process restart stranding one real proposal). A run
+  killed mid-sweep leaves its own unexecuted leftovers `CONSENSUS_REACHED`
+  too - so the NEXT run's sweep has to clear an even bigger backlog,
+  itself unbounded and un-timeboxed. Two real runs in a row were killed
+  this way, each adding to what the next had to clear.
+- **Fixed**: `execute_stuck_consensus_reached_proposals(app, limit=...)`
+  gained an optional `limit` (`src/scheduler.py`) - `None` (every
+  existing caller, including `main.py`'s long-running daemon with no
+  wall-clock deadline) keeps the old unbounded behavior exactly.
+  `scripts/run_once.py` (the GitHub Actions entrypoint - the one with a
+  real deadline) now passes `limit=5`: worst case ~500s of reasoning
+  calls, leaving real headroom in the 20-minute budget for
+  `run_hourly()`'s own steps to actually run afterward. A bounded sweep
+  drains an arbitrarily large backlog over several 10-minute firings
+  instead of trying, and failing, to clear it atomically in one.
+  Mutation-tested: `test_the_sweep_respects_a_limit_and_leaves_the_rest_stuck_for_the_next_run`
+  was confirmed to fail (`assert 3 == 2`) with the `if limit is not
+  None: stuck = stuck[:limit]` line removed, then pass again restored.
+  Full suite: 168 passed.
+- **Still not confirmed**: how large the real backlog is right now (two
+  cancelled runs' worth, compounded) or whether 5-per-firing drains it
+  fast enough to matter to the owner - the next real runs are the proof.

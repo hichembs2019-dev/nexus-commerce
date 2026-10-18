@@ -34,7 +34,21 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 8  # must finish well before the next 10-minute firing
+    # Found live 2026-10-18 (run 39158203166, first run with real
+    # GROQ_API_KEY/GEMINI_API_KEY configured): a single real Gemini
+    # (gemma-4-26b-a4b-it, free tier) reasoning call took ~50-100 real
+    # seconds to return each time - not Groq retries (Groq 429'd once
+    # per cycle, immediately, no internal retry loop in the log).
+    # Combined with CJ's own real 429 pacing on price_inventory_review
+    # (~2 real minutes for 2 products at CJ's 1 QPS limit), the 8-minute
+    # ceiling killed the job mid-run with `##[error]The operation was
+    # canceled` before a single real decision was ever recorded - no
+    # run_hourly summary line, no proposal outcome, nothing. The 8-minute
+    # figure predates any real reasoning call existing in this loop at
+    # all. concurrency.cancel-in-progress stays false, so a slow run
+    # queues the next scheduled firing instead of corrupting shared state
+    # - raising this is safe, not just generous.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 

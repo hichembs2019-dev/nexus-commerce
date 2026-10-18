@@ -1954,3 +1954,45 @@ inferred.
   `test_get_product_retries_once_on_429_then_succeeds` was confirmed to
   fail with the old bare-`httpx.get()` code restored, then pass again with
   the fix. Full suite: 167 passed.
+
+## First real agent reasoning - and a real 8-minute timeout kill (2026-10-18)
+
+Run `39158203166` (`workflow_dispatch`, triggered right after the owner
+added `GROQ_API_KEY` and `GEMINI_API_KEY` as real GitHub secrets), read
+back via `get_job_logs`.
+
+- **Real milestone, literal proof**: the job's own env dump now shows
+  `GEMINI_API_KEY: ***` and `GROQ_API_KEY: ***` (both set, reaching the
+  app) - the `MockAgentReasoningClient` warning that appeared in every
+  prior run is gone from this one. The single agent made real reasoning
+  calls: `POST https://generativelanguage.googleapis.com/.../gemma-4-26b-a4b-it:generateContent
+  "HTTP/1.1 200 OK"` appears five times with real content behind it, not
+  mocked.
+- **Still blank**: `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` - the
+  `MockTelegramClient` warning is still present this run. No real
+  approval message was sent.
+- **Real bug found live, same run**: Groq returned `429 Too Many
+  Requests` on literally every call this run (consistent with the
+  account-wide Groq TPD exhaustion already documented for this GitHub
+  account from nexus-studio's own work). Each fallback to Gemini then
+  took **~50-100 real seconds** to return (the gap between the Groq 429
+  log line and the next Gemini 200 OK log line, repeated five times -
+  not Groq retrying internally, since only one 429 line appears per
+  cycle). Combined with `price_inventory_review`'s own ~2-real-minute CJ
+  429-pacing loop (see the entry above), the job's `timeout-minutes: 8`
+  killed it mid-run: `##[error]The operation was canceled` at the 8:00
+  mark, before a single proposal reached a final outcome and before any
+  `run_hourly: {...}` summary line was ever logged this run. The
+  `Save the real database` step still ran (step `always()`), so no data
+  was corrupted - the run simply produced no result at all, real or
+  mock.
+- **Fixed**: `.github/workflows/run_hourly.yml`'s `timeout-minutes`
+  raised from 8 to 20. The 8-minute figure predates any real reasoning
+  call existing in this loop at all - it was sized for CJ/Shopify HTTP
+  calls alone. `concurrency.cancel-in-progress: false` already means a
+  slow run queues the next scheduled firing rather than overlapping it,
+  so raising the ceiling is safe, not just generous. No test covers CI
+  YAML config, so nothing to mutation-test here.
+- **Not yet confirmed**: whether a real run now completes end-to-end
+  within 20 minutes and produces a real decision - the next triggered
+  run is the proof, not this entry.

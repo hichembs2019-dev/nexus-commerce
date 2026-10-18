@@ -34,3 +34,23 @@ What this means in practice here:
   human gate left to catch an overclaim before it reaches Shopify/CJ —
   which makes the rule above load-bearing for real money, not a style
   preference.
+
+### A real example of breaking this rule, same day (2026-10-18)
+
+When `docker compose up -d --build` was blocked by Claude Code's own
+"Real-World Transactions" auto-mode classifier (a deliberate safety
+block on unattended real spending - not a bug), the suggested fix was
+"switch the session's mode dropdown to Auto" - stated as fact, not
+checked. The owner then sent a real screenshot showing **Auto was
+already selected**, and the block still happened. The suggestion was
+wrong because it was never verified against the actual client UI or the
+actual block reason - a guess dressed as an instruction.
+
+**The lesson, stated plainly because it had to be said twice:** do not
+suggest a fix for a permission/capability block without first reading
+what the block mechanism actually is (e.g. `read_documentation` for this
+account's own session/permission docs) or seeing real evidence it would
+work. "This should fix it" is a guess; "I checked X and it says Y" is
+not. When a suggested fix turns out wrong, say exactly that - not
+"maybe try this other thing" immediately, but confirm what the real
+documented mechanism is first.

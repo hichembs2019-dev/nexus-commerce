@@ -1,4 +1,3 @@
-from src.agents.agent import AGENT_NAMES
 from src.db import repository
 from src.db.models import ActionType, ProposalStatus
 from src.workflows.pipeline import (
@@ -33,10 +32,12 @@ def test_submit_proposal_cj_order_has_no_spending_cap_however_large_the_cost(con
     )
 
     assert proposal.status == ProposalStatus.CONSENSUS_REACHED.value
-    assert len(repository.get_votes_for_round(conn, proposal.id, 1)) == len(AGENT_NAMES)
+    # Owner's 2026-10-18 instruction: no agent vote gates this any more -
+    # no votes are ever recorded for a proposal going through submit_proposal().
+    assert repository.get_votes_for_round(conn, proposal.id, 1) == []
 
 
-def test_submit_proposal_within_limits_runs_full_consensus(conn, settings):
+def test_submit_proposal_within_limits_goes_straight_to_consensus_reached_with_no_agent_vote(conn, settings):
     agents = all_approving_agents()
 
     proposal = submit_proposal(
@@ -52,7 +53,8 @@ def test_submit_proposal_within_limits_runs_full_consensus(conn, settings):
     )
 
     assert proposal.status == ProposalStatus.CONSENSUS_REACHED.value
-    assert len(repository.get_votes_for_round(conn, proposal.id, 1)) == len(AGENT_NAMES)
+    assert repository.get_votes_for_round(conn, proposal.id, 1) == []
+    assert agents[0]._client.calls == []  # the agent was never called for this gate
 
 
 def test_submit_proposal_with_zero_profit_cost_breakdown_is_auto_rejected(conn, settings):

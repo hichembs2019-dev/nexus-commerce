@@ -16,7 +16,6 @@ from .db.database import init_db
 from .integrations.anthropic_client import (
     AgentReasoningClient,
     MockAgentReasoningClient,
-    RealAgentReasoningClient,
     RealGeminiReasoningClient,
     RealGroqReasoningClient,
 )
@@ -24,7 +23,7 @@ from .integrations.cj_client import CJClient, MockCJClient, RealCJClient
 from .integrations.shopify_client import MockShopifyClient, RealShopifyClient, ShopifyClient
 from .integrations.supplier_client import SupplierRegistry
 from .integrations.telegram_client import MockTelegramClient, RealTelegramClient, TelegramClient
-from .tools.web_search import MockWebSearchTool, RealWebSearchTool, WebSearchTool
+from .tools.web_search import MockWebSearchTool, WebSearchTool
 from .workflows.executor import Executor
 
 logger = logging.getLogger("nexus_commerce")
@@ -80,37 +79,20 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
     # the real, measured reason (34/38 real proposals FAILED_CONSENSUS,
     # zero real orders, under the previous 2-agent/free-tier setup).
     agent_count = len(AGENT_NAMES)
-    # "الاذكى طبعا" (the smartest, obviously) - Claude (Anthropic) is now
-    # the one agent's PRIMARY reasoning provider, not the last resort it
-    # was under the old multi-agent/free-tier-first wiring (that order
-    # existed to avoid spending real Anthropic balance across several
-    # agents' worth of real API calls per round - moot now that there is
-    # only one agent and one real call per round). Falls back through
-    # Groq then Gemini on a real Anthropic error, same single-agent-own-
-    # retry-chain discipline every provider here already uses - never a
-    # silent swap to a "dumber" provider unless Anthropic itself failed.
-    if not force_mocks and settings.anthropic_configured:
+    # Owner's explicit instruction, 2026-10-18 ("احذف كلود لانه ليس
+    # مجاني" - remove Claude, it isn't free): Anthropic is OUT of this
+    # agent's reasoning chain entirely, reverted to the free-tier-first
+    # order (Groq primary, Gemini its fallback) this project used before
+    # "الاذكى طبعا" briefly put Claude first the same day. Only real cost
+    # here now is whatever Groq/Gemini's own free tiers don't cover -
+    # Claude is not instantiated for this at all, configured or not.
+    if not force_mocks and settings.groq_configured:
         gemini_fallback = (
             RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model)
             if settings.gemini_configured
             else None
-        )
-        groq_fallback = (
-            RealGroqReasoningClient(settings.groq_api_key, settings.groq_model, fallback=gemini_fallback)
-            if settings.groq_configured
-            else gemini_fallback
         )
         reasoning_clients: list[AgentReasoningClient] = [
-            RealAgentReasoningClient(settings.anthropic_api_key, settings.claude_model, fallback=groq_fallback)
-            for _ in range(agent_count)
-        ]
-    elif not force_mocks and settings.groq_configured:
-        gemini_fallback = (
-            RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model)
-            if settings.gemini_configured
-            else None
-        )
-        reasoning_clients = [
             RealGroqReasoningClient(settings.groq_api_key, settings.groq_model, fallback=gemini_fallback)
             for _ in range(agent_count)
         ]
@@ -120,18 +102,24 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
         ]
     else:
         if not force_mocks:
-            logger.warning("Neither ANTHROPIC_API_KEY nor GROQ_API_KEY nor GEMINI_API_KEY set - using MockAgentReasoningClient for every agent")
+            logger.warning("Neither GROQ_API_KEY nor GEMINI_API_KEY set - using MockAgentReasoningClient for every agent (Claude is deliberately excluded here, see owner's 2026-10-18 instruction)")
         reasoning_clients = [MockAgentReasoningClient() for _ in range(agent_count)]
     agents = build_agents(reasoning_clients)
 
-    if not force_mocks and settings.anthropic_configured:
-        # Web search is still Anthropic-only (see docs/SOURCES.md "Web
-        # search tool") - independent of which provider runs the 5 agents.
-        web_search: WebSearchTool = RealWebSearchTool(settings.anthropic_api_key, settings.claude_model)
-    else:
-        if not force_mocks:
-            logger.warning("ANTHROPIC_API_KEY not set - using MockWebSearchTool")
-        web_search = MockWebSearchTool()
+    # Owner's instruction, 2026-10-18 ("اترك المجاني و بس" - leave only
+    # the free one): the only real web-search implementation this project
+    # has is Anthropic's own server-side tool (see docs/SOURCES.md "Web
+    # search tool") - there is no free provider for it here. Rather than
+    # silently keep spending real Anthropic money on the one real
+    # implementation available, this always uses MockWebSearchTool now
+    # (no real competitor-price search), honestly logged as the real
+    # trade-off it is - not a quiet downgrade. Real web search for
+    # new_product_discovery.py's competitor research needs either a real
+    # Anthropic key spend decision from the owner, or a different, free
+    # search provider plugged in here later.
+    if not force_mocks:
+        logger.warning("Web search disabled (owner's 2026-10-18 free-only instruction) - using MockWebSearchTool, no real competitor-price search")
+    web_search: WebSearchTool = MockWebSearchTool()
 
     # Only "cj" has any real-path potential today (see docs/UNVERIFIED.md);
     # the registry exists so new_product_discovery.py can search additional

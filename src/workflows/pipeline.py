@@ -1,5 +1,5 @@
 """Ties spec steps 1-6 together end to end:
-submit_proposal (auto-limits -> consensus) -> execute_autonomously (execute ->
+submit_proposal (auto-limits -> ready) -> execute_autonomously (execute ->
 post-execution review).
 
 Owner's explicit instruction, 2026-10-14 ("الاستقلالية التامة و العامة...
@@ -11,17 +11,32 @@ and scheduler.py). Telegram is used only to notify the owner AFTER a real
 CJ_ORDER has actually executed ("انا ارى الارباح و بس" - I just see the
 results), since that is the one message the owner asked to still receive.
 
+Owner's second, further explicit instruction, 2026-10-18 ("مافيش موافق
+رافض معدل، فيه شغل و بس... الامر الواحد هو يشتغل مافيش رفض و موافقة" -
+there's no approve/reject/amend, there's just WORK, the one command is
+"it works", no reject and no approval): `submit_proposal()` no longer
+calls the agent at all for this gate - `run_consensus()`
+(agents/consensus.py) and the whole approve/reject/amend vote are now
+UNUSED by this path. A proposal that passes `_check_limits()` (a hard,
+deterministic math check - real profit > 0, not an opinion, see that
+function's own docstring) goes straight to CONSENSUS_REACHED and executes.
+The status name is kept as-is (renaming it would touch every consumer
+below and every test) but it no longer means "the agent agreed" - it
+means "passed the automatic checks, nothing blocks it."
+
 send_for_telegram_approval/handle_telegram_decision are kept only so any
 proposal already sent to Telegram with real Approve/Reject buttons *before*
-this change (sitting in a real chat, AWAITING_TELEGRAM in the database)
-still works if the owner taps one - nothing new is ever routed through that
-path again. execute_stuck_awaiting_telegram_proposals() closes the gap for
-ones nobody ever taps.
+the 2026-10-14 change (sitting in a real chat, AWAITING_TELEGRAM in the
+database) still works if the owner taps one - nothing new is ever routed
+through that path again. execute_stuck_awaiting_telegram_proposals()
+closes the gap for ones nobody ever taps.
 
 Kept as orchestration only - the actual rules live in tools/limits.py,
-agents/consensus.py, workflows/executor.py, and
-agents/post_execution_review.py; this module just calls them in order and
-persists the result at each step.
+workflows/executor.py, and agents/post_execution_review.py (still real,
+still runs AFTER execution to catch a bug in what already happened - see
+that module's own docstring; it does not gate anything before execution,
+so it is untouched by this change); this module just calls them in order
+and persists the result at each step.
 """
 from __future__ import annotations
 
@@ -29,7 +44,6 @@ import sqlite3
 from dataclasses import dataclass
 
 from ..agents.agent import Agent
-from ..agents.consensus import run_consensus
 from ..agents.post_execution_review import review_execution
 from ..config import Settings
 from ..db import repository
@@ -70,6 +84,12 @@ def submit_proposal(
     settings: Settings,
     agents: list[Agent],
 ) -> Proposal:
+    """`agents` is still accepted (execute_autonomously/review_execution
+    further down this same pipeline still use it for post-execution
+    review) but is no longer called here - see this module's own
+    docstring, owner's 2026-10-18 instruction: no approve/reject/amend
+    gate before execution any more, only the hard _check_limits() math
+    check."""
     proposal = repository.create_proposal(
         conn,
         action_type=action_type,
@@ -91,7 +111,14 @@ def submit_proposal(
         )
         return repository.get_proposal(conn, proposal.id)
 
-    return run_consensus(conn, proposal, agents)
+    repository.update_proposal_status(conn, proposal.id, ProposalStatus.CONSENSUS_REACHED.value)
+    repository.audit(
+        conn,
+        actor="pipeline",
+        action="auto_approved_no_agent_review",
+        details={"proposal_id": proposal.id, "reason": "owner's 2026-10-18 instruction: work, not approve/reject"},
+    )
+    return repository.get_proposal(conn, proposal.id)
 
 
 def _format_summary(proposal: Proposal) -> str:

@@ -1700,3 +1700,49 @@ anything because they won't agree).
   this change. No real proposal has gone through the single-agent path
   yet, and no new real order exists - this entry reports what changed in
   the code, not a result.
+
+## No agent gate at all, and no Claude - 2026-10-18, same day
+
+Two further owner instructions, same session, right after the single-
+agent change above:
+
+> مافيش موافق رافض معدل، فيه شغل و بس... الامر الواحد هو يشتغل مافيش رفض
+> و موافقة. احذف هذا الغباء.
+> (There's no approve/reject/amend, there's just WORK. The one command
+> is "it works" - no reject and no approval. Delete this stupidity.)
+
+> احذف كلود لانه ليس مجاني ... اترك المجاني و بس
+> (Remove Claude, it isn't free ... leave only the free one.)
+
+**`submit_proposal()` (`src/workflows/pipeline.py`) no longer calls
+`run_consensus()`/the agent at all.** A proposal that passes
+`_check_limits()` (the hard, deterministic real-profit-greater-than-zero
+math check - not an AI opinion) goes straight to `CONSENSUS_REACHED` and
+executes. `agents/consensus.py` (`run_consensus`, `MIN_APPROVALS`) and
+`agents/agent.py`'s `Agent.review()` are unchanged and still fully
+tested (`tests/test_consensus.py`, unchanged) but are **no longer called
+by any real path** - `post_execution_review.py` still uses the `Agent`
+class, but that runs AFTER a real execution to catch a bug in what
+already happened, not to gate it beforehand (see that module's own
+docstring; untouched by this instruction since it was never a
+reject/approve-before-acting step).
+
+**Anthropic/Claude removed entirely from `build_app()`** (`src/app.py`):
+- Agent reasoning: reverted to free-tier-only order - Groq primary,
+  Gemini its fallback, Mock if neither is configured. `RealAgentReasoningClient`
+  (Anthropic) is never instantiated here any more, regardless of whether
+  `ANTHROPIC_API_KEY` is set.
+- Web search (`new_product_discovery.py`'s competitor-price research):
+  this project has no free web-search implementation - the only real one
+  (`RealWebSearchTool`) is Anthropic's own server-side tool. Rather than
+  silently keep spending real Anthropic money on the one real
+  implementation available, `web_search` is now **always**
+  `MockWebSearchTool()` (no real competitor-price search happens) - a
+  real, honestly-logged functional trade-off, not a free equivalent. A
+  free search provider would need to be built and plugged in here to get
+  real competitor research back without spending on Anthropic.
+
+Full suite after this change: **148 passed** (same count - `test_pipeline.py`'s
+two consensus-threshold assertions were replaced with assertions that no
+vote is ever recorded and the agent's reasoning client is never called
+for this gate).

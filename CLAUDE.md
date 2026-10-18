@@ -34,3 +34,21 @@ What this means in practice here:
   human gate left to catch an overclaim before it reaches Shopify/CJ —
   which makes the rule above load-bearing for real money, not a style
   preference.
+
+## Owner's standing rule — exhaust real research before reporting a blocker
+
+Owner's own words (2026-10-18): "يجب عليك البحث عن حل، ابحث في كل شيء و
+كل العالم و كل الانترنت و كل شيء و ابحث" (You must search for a
+solution - search everything, the whole world, the whole internet,
+everything, and search.)
+
+When something looks blocked (no free hosting, a permission denial, a
+missing feature), that is the start of the work, not the end of it.
+Before reporting "this isn't possible" or asking the owner to choose
+between options, actually search: the real docs, the real API, the real
+account state (`curl`, the GitHub API, a live SDK call) - the same way
+the GitHub Actions solution in docs/SOURCES.md "GitHub Actions real run"
+was found only after checking the repo's real visibility
+(`private: false`) rather than assuming no free continuous-run option
+existed. A real "no" found after searching is a complete answer; a "no"
+given instead of searching is not.

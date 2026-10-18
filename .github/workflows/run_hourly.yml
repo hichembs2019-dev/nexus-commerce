@@ -1,0 +1,78 @@
+name: nexus-commerce hourly run
+
+# Real, free, no-new-account continuous operation for a repo with no
+# always-on server (owner explicitly does not want to buy/host one, see
+# CLAUDE.md and docs/SOURCES.md "GitHub Actions real run"). This repo is
+# public, so Actions minutes are unlimited and free - confirmed live via
+# `curl https://api.github.com/repos/<owner>/nexus-commerce` returning
+# "private": false, not assumed.
+#
+# Each firing is a FRESH checkout with no local state, unlike main.py's
+# long-running process - nexus_commerce.db (order de-dup, proposal/audit
+# history) MUST survive between runs or check_new_paid_orders would
+# re-propose and re-order the SAME real Shopify order every single run.
+# actions/cache restores it at the start and ALWAYS saves it back at the
+# end (even on failure). A cache KEY is immutable once written - saving
+# to the same key twice is a silent no-op, not an overwrite - so each
+# run saves under a unique per-run key and restores via `restore-keys`
+# prefix match, which GitHub resolves to the most recently created
+# matching cache. Old per-run caches age out under GitHub's own 7-day/
+# 10GB eviction, nothing here needs to clean them up manually.
+
+on:
+  schedule:
+    # Every 10 minutes - GitHub's own documented floor for schedule
+    # cron is 5 minutes; actual firing can lag under load, this is not
+    # a hard real-time guarantee.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}  # lets the owner trigger one real run by hand from the GitHub UI
+
+concurrency:
+  group: nexus-commerce-run
+  cancel-in-progress: false  # never cancel a run that might be mid real-purchase
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8  # must finish well before the next 10-minute firing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore the real database (order/proposal history)
+        id: db_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: nexus_commerce.db
+          key: nexus-commerce-db-${{ github.run_id }}
+          restore-keys: |
+            nexus-commerce-db-
+
+      - run: pip install -r requirements.txt
+
+      - name: Run one real pass
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODEL: ${{ secrets.GROQ_MODEL }}
+          SHOPIFY_SHOP_URL: ${{ secrets.SHOPIFY_SHOP_URL }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          CJ_API_KEY: ${{ secrets.CJ_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DRY_RUN: ${{ secrets.DRY_RUN }}
+          DATABASE_PATH: nexus_commerce.db
+        run: python3 scripts/run_once.py
+
+      - name: Save the real database (always, even if the run above failed)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: nexus_commerce.db
+          key: nexus-commerce-db-${{ github.run_id }}

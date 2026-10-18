@@ -1816,3 +1816,27 @@ and why, not a confirmed real result. The owner can trigger one real run
 by hand (`workflow_dispatch`, the "Run workflow" button on the Actions
 tab) once the secrets are added, and the real Actions log is the
 evidence to check next, not this entry.
+
+### First real test run - run 39142048956, triggered live, 2026-10-18
+
+Triggered via `workflow_dispatch` through the GitHub API (not assumed to
+work - watched to completion): checkout, Python setup, and cache-restore
+all real and green. `pip install -r requirements.txt` real and green
+(15s). Then a REAL bug, not the expected "missing secrets" one:
+
+```
+File "/home/runner/work/nexus-commerce/nexus-commerce/scripts/run_once.py", line 14, in <module>
+    from src.app import build_app
+ModuleNotFoundError: No module named 'src'
+```
+
+`python3 scripts/run_once.py` puts `scripts/` itself on `sys.path[0]`,
+not the repository root - unlike `python -m src.main` (`main.py`'s own
+invocation), where `-m` always puts the CURRENT directory on
+`sys.path[0]`. Fixed with `PYTHONPATH: .` on the step. Also observed in
+the same log, as a direct consequence (the script crashed before
+`init_db()` ever ran, so no `nexus_commerce.db` file existed yet to
+cache): `actions/cache/save` logged `Path Validation Error: Path(s)
+specified in the action for caching do(es) not exist` - expected given
+the crash, not a second real bug, left as a real observation rather
+than silently dropped.

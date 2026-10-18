@@ -68,6 +68,15 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DRY_RUN: ${{ secrets.DRY_RUN }}
           DATABASE_PATH: nexus_commerce.db
+          # Real bug found live (run 39142048956, workflow_dispatch test,
+          # 2026-10-18): `python3 scripts/run_once.py` puts scripts/ on
+          # sys.path[0], not the repo root, so `from src.app import
+          # build_app` failed with ModuleNotFoundError - `python -m
+          # src.main` (main.py's own invocation) never hit this because
+          # `-m` always puts the CURRENT directory (the repo root) on
+          # sys.path[0] instead. PYTHONPATH=. is the fix for a plain
+          # script invocation.
+          PYTHONPATH: .
         run: python3 scripts/run_once.py
 
       - name: Save the real database (always, even if the run above failed)

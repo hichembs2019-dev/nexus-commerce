@@ -1648,3 +1648,55 @@ it. Owner's instruction: "ضعه كل ساعة" (set it to every hour) - back to
 the project's own original default. `.env`'s `HOURLY_INTERVAL_MINUTES` is
 60 again; this is a deployment-config change, not a code change, so
 nothing in `src/` was touched and no test is affected.
+
+## Down to one agent - 2026-10-18
+
+**Real numbers checked live against `nexus_commerce.db` before this
+change**, not assumed: `orders` table count = **0** (zero real sales,
+ever). Of 38 real `publish_product` proposals: 2 executed, 1
+execution_failed, **34 FAILED_CONSENSUS**. All real activity happened in
+roughly one day (2026-10-13 17:39 to 2026-10-14 08:48); no evidence in
+the database or git history that the system ran again after the
+2026-10-16 commit.
+
+Owner's own words, after being shown those numbers: "اترك وكيل واحد يعمل
+في nexus commerce الاذكى طبعا و يريد ان يشتغل اتركه" (leave one agent
+working in nexus-commerce, the smartest one of course, and let it work)
+- then, confirming the reasoning directly: "يكفي وكيل واحد و الا لن نبيع
+شيء لانهم لن يتفقو" (one agent is enough, otherwise we won't sell
+anything because they won't agree).
+
+- `AGENT_NAMES` (`src/agents/agent.py`): `("A1", "A2")` → `("A1",)`.
+- `MIN_APPROVALS` (`src/agents/consensus.py`): `2` → `1` - with one
+  agent, 2 was mathematically impossible to ever reach; every real
+  proposal would have failed consensus forever regardless of how good it
+  was.
+- `AGENT_SYSTEM_PROMPT` (`src/agents/prompts.py`) rewritten from dual
+  ("أحد وكيلَي... كليكما") to singular framing - the prompt's actual
+  business judgment criteria (margin, market, listing quality) are
+  untouched; only the "two agents must agree" framing is gone, since it
+  no longer describes reality. One line added addressing the owner's own
+  "يريد ان يشتغل" (wants to work) instruction directly: hesitation needs
+  a real stated business reason, not default caution.
+- **Reasoning provider order flipped**: Anthropic (Claude,
+  `claude-sonnet-5-5`) is now PRIMARY - "الاذكى طبعا" (the smartest, of
+  course) - with Groq then Gemini as its own fallback chain on a real
+  Anthropic error (`RealAgentReasoningClient` gained the same `fallback`
+  parameter the other two clients already had). The old Groq-first order
+  existed specifically to avoid spending real Anthropic balance across
+  *several* agents' real calls per round - moot with exactly one agent
+  making one real call per round.
+- `build_five_agents()` renamed to `build_agents()` (`src/agents/agent.py`)
+  - it was never actually five, and the name was already stale at two.
+- `tests/test_consensus.py` rewritten for `MIN_APPROVALS=1`: every
+  scenario that depended on "exactly 2 needed" was restructured to "zero
+  approvals in a round" vs. "at least 1". Still drives `run_consensus()`
+  with 5 mock agents (the module itself is agent-count-agnostic; testing
+  amendment-ordering and envelope-unwrapping needs more than one voter
+  regardless of how many agents production actually runs). Full suite:
+  **148 passed**, same count as before - no test was deleted, only
+  rewritten to match the new real threshold.
+- **Not yet done**: the system has not been redeployed/run live since
+  this change. No real proposal has gone through the single-agent path
+  yet, and no new real order exists - this entry reports what changed in
+  the code, not a result.

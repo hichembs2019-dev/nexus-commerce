@@ -1,19 +1,22 @@
-"""One Agent class, instantiated as A1..A2 - identical system prompt,
-identical reasoning client type, identical permissions (none of them can
-themselves call Shopify/CJ/Telegram; see consensus.py and the executor,
-which are the only things that ever do). Nothing distinguishes one agent
-from another except the name used in the audit trail.
+"""One Agent class. Nothing distinguishes one agent from another except
+the name used in the audit trail and which reasoning client backs it -
+none of them can themselves call Shopify/CJ/Telegram; see consensus.py
+and the executor, which are the only things that ever do.
 
-Owner's own explicit, direct instruction (2026-10-14): reduced from 5 to 2
-agents, as a real experiment - "احذف ثلاثة وكلاء و ابقِ على اثنان" - after
-the real evidence that 5 real Gemini calls per round, under the free
-tier's real failure rate, rarely all landed cleanly enough to agree. Fewer
-agents means fewer real API calls per round (faster, cheaper) and fewer
-chances for one flaky call to block a round. See docs/SOURCES.md for the
-measured result that led here, and the owner's own words: "ان نجح كل شيء
-سنغير لاحقا و ندفع" (if this works, we'll switch later and pay) - this is
-an explicit, acknowledged interim trade-off, not a silent permanent
-redesign.
+Owner's own explicit, direct instruction (2026-10-18), after a real,
+measured result showed 2 agents under the free Gemini/Groq tiers still
+left 34 of 38 real publish_product proposals FAILED_CONSENSUS and zero
+real orders ever placed (see docs/SOURCES.md "Down to one agent"):
+"اترك وكيل واحد يعمل في nexus commerce الاذكى طبعا و يريد ان يشتغل
+اتركه" (leave ONE agent working, the smartest one of course, and let it
+work). Down from 2 (2026-10-14's own experiment, see the git history of
+this docstring) to exactly 1 - the real, measured failure here was never
+proposal quality, it was a free-tier reasoning provider's own error rate
+auto-degrading real votes to "reject" (see consensus.py's
+_review_with_fallback). One reliable agent that actually runs is worth
+more than several that mostly don't. This is explicit and acknowledged
+as a real trade-off (no more peer review before an action executes), not
+a silent redesign.
 """
 from __future__ import annotations
 
@@ -25,7 +28,7 @@ from ..db.models import AgentVote, Proposal
 from ..integrations.anthropic_client import AgentReasoningClient
 from .prompts import AGENT_SYSTEM_PROMPT, build_review_prompt
 
-AGENT_NAMES = ("A1", "A2")
+AGENT_NAMES = ("A1",)
 
 
 @dataclass
@@ -104,7 +107,7 @@ class Agent:
         return parse_agent_decision(raw)
 
 
-def build_five_agents(reasoning_clients: list[AgentReasoningClient]) -> list[Agent]:
+def build_agents(reasoning_clients: list[AgentReasoningClient]) -> list[Agent]:
     if len(reasoning_clients) != len(AGENT_NAMES):
         raise ValueError(f"exactly {len(AGENT_NAMES)} reasoning clients are required, one per agent")
     return [Agent(name, client) for name, client in zip(AGENT_NAMES, reasoning_clients)]

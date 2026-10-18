@@ -38,10 +38,15 @@ def _make_proposal(conn):
     )
 
 
-# --- owner's explicit instruction (2026-10-14): MIN_APPROVALS = 2, not 5/5 ---
-# Real reason, see src/agents/consensus.py's module doc: strict 5/5 reached
-# consensus 0 times out of 20 real candidates over ~4.5 hours of real
-# operation under the free Gemini tier's real failure rate.
+# --- owner's explicit instruction (2026-10-18): MIN_APPROVALS = 1, not 2 ---
+# Real reason, see src/agents/consensus.py's module doc: even 2/2 still
+# left 34 of 38 real proposals FAILED_CONSENSUS and zero real orders under
+# the free-tier reasoning failure rate - down to exactly one real,
+# reliable agent (Claude) whose own single approve IS the decision now.
+# This file still drives consensus.py with 5 mock agents regardless - the
+# module itself is agent-count-agnostic, and testing it against several
+# voters at once is the only way to exercise amendment-ordering and
+# envelope-unwrapping below.
 
 def test_unanimous_approval_in_round_1_reaches_consensus(conn):
     proposal = _make_proposal(conn)
@@ -57,13 +62,13 @@ def test_unanimous_approval_in_round_1_reaches_consensus(conn):
 
 
 def test_exactly_min_approvals_reaches_consensus_even_with_a_majority_rejecting(conn):
-    # The owner's own explicit threshold: 2 of 5, not a majority of 3.
-    assert MIN_APPROVALS == 2
+    # The owner's own explicit threshold: 1 real approve, not a majority.
+    assert MIN_APPROVALS == 1
     proposal = _make_proposal(conn)
     agents = _agents(
         [
             [_approve()],
-            [_approve()],
+            [_reject("too expensive")],
             [_reject("too expensive")],
             [_reject("too expensive")],
             [_reject("too expensive")],
@@ -78,12 +83,12 @@ def test_exactly_min_approvals_reaches_consensus_even_with_a_majority_rejecting(
 
 def test_fewer_than_min_approvals_does_not_reach_consensus_in_that_round(conn):
     proposal = _make_proposal(conn)
-    # Only 1 approval in round 1 (below MIN_APPROVALS=2); 2 approvals in
+    # Zero approvals in round 1 (below MIN_APPROVALS=1); 1 approval in
     # round 2 clears it.
     agents = _agents(
         [
-            [_approve(), _approve()],
             [_reject("no"), _approve()],
+            [_reject("no"), _reject("no")],
             [_reject("no"), _reject("no")],
             [_reject("no"), _reject("no")],
             [_reject("no"), _reject("no")],
@@ -95,15 +100,15 @@ def test_fewer_than_min_approvals_does_not_reach_consensus_in_that_round(conn):
     assert result.status == ProposalStatus.CONSENSUS_REACHED.value
     assert result.round == 2
     round1_votes = repository.get_votes_for_round(conn, proposal.id, 1)
-    assert sum(1 for v in round1_votes if v.vote == "approve") == 1  # below MIN_APPROVALS
+    assert sum(1 for v in round1_votes if v.vote == "approve") == 0  # below MIN_APPROVALS
 
 
 def test_rejection_that_never_resolves_fails_after_max_rounds(conn):
     proposal = _make_proposal(conn)
-    # Only 1 approval every round (below MIN_APPROVALS=2) - never clears it.
+    # Zero approvals every round (below MIN_APPROVALS=1) - never clears it.
     agents = _agents(
         [
-            [_approve()] * MAX_ROUNDS,
+            [_reject("never")] * MAX_ROUNDS,
             [_reject("never")] * MAX_ROUNDS,
             [_reject("never")] * MAX_ROUNDS,
             [_reject("never")] * MAX_ROUNDS,
@@ -122,11 +127,11 @@ def test_rejection_that_never_resolves_fails_after_max_rounds(conn):
 def test_an_amendment_becomes_the_candidate_payload_for_the_next_round(conn):
     proposal = _make_proposal(conn)
     amended = {"quantity": 2}
-    # Round 1: only 1 approval (below MIN_APPROVALS) so the amendment is
+    # Round 1: zero approvals (below MIN_APPROVALS=1) so the amendment is
     # actually picked up for round 2, where it clears the threshold.
     agents = _agents(
         [
-            [_approve(), _approve()],
+            [_reject("no"), _approve()],
             [_reject("no"), _approve()],
             [_reject("no"), _reject("no")],
             [_reject("no"), _reject("no")],
@@ -167,11 +172,11 @@ def test_two_different_amendments_in_one_round_the_first_agent_order_wins(conn):
 
 def test_never_reaching_consensus_after_3_rounds_is_marked_failed_and_cancelled(conn):
     proposal = _make_proposal(conn)
-    # Every round: at most 1 approval (below MIN_APPROVALS=2) - the
-    # threshold is never cleared across all 3 rounds.
+    # Every round: zero approvals (below MIN_APPROVALS=1) - the threshold
+    # is never cleared across all 3 rounds.
     agents = _agents(
         [
-            [_approve()] * MAX_ROUNDS,
+            [_reject("no")] * MAX_ROUNDS,
             [_reject("no")] * MAX_ROUNDS,
             [_reject("no")] * MAX_ROUNDS,
             [_reject("no")] * MAX_ROUNDS,
@@ -190,15 +195,15 @@ def test_never_reaching_consensus_after_3_rounds_is_marked_failed_and_cancelled(
 
 def test_an_unparseable_agent_reply_is_treated_as_a_reject_not_a_crash_or_silent_approve(conn):
     proposal = _make_proposal(conn)
-    # Round 1: 1 real approval + A5's garbage reply. If the garbage reply
-    # were silently treated as an approve, round 1 would wrongly reach
-    # MIN_APPROVALS=2 right here. Treated correctly as a reject, it stays
-    # at 1 approval and consensus is only reached in round 2, once A5's
-    # real (parseable) reply is an actual approve.
+    # Round 1: every real vote rejects, plus A5's garbage reply. If the
+    # garbage reply were silently treated as an approve, round 1 would
+    # wrongly reach MIN_APPROVALS=1 right here. Treated correctly as a
+    # reject, round 1 stays at 0 approvals and consensus is only reached
+    # in round 2, once A5's real (parseable) reply is an actual approve.
     agents = _agents(
         [
-            [_approve()] * MAX_ROUNDS,
             [_reject("no"), _approve()],
+            [_reject("no"), _reject("no")],
             [_reject("no"), _reject("no")],
             [_reject("no"), _reject("no")],
             ["this is not json at all", _approve(), _approve()],

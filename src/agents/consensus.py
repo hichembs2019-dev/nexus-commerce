@@ -11,9 +11,20 @@ reached consensus **zero times out of 20 real candidates** over ~4.5 hours
 of real operation - not because any candidate was bad, but because getting
 5 consecutive successful, agreeing real API calls (up to 3 rounds) is
 statistically very hard at that failure rate. The owner was shown this
-real count before deciding. MIN_APPROVALS below is that explicit choice -
-"صيغها اثنان على خمسة 2/5" - not a guess or a default this project picked
-on its own.
+real count before deciding. 2/5 was that explicit first choice -
+"صيغها اثنان على خمسة 2/5".
+
+That number dropped to 2/2 when the agent count itself dropped to 2
+(2026-10-14), and even at 2/2 the real database (`nexus_commerce.db`,
+checked live 2026-10-18) still showed 34 of 38 real publish_product
+proposals FAILED_CONSENSUS and exactly zero real orders ever placed - the
+same free-tier reasoning failure rate this module's history already
+describes, just at smaller numbers. Owner's next explicit instruction
+(2026-10-18): "اترك وكيل واحد يعمل ... الاذكى ... و يريد ان يشتغل" (leave
+one agent working, the smartest one, that wants to work) - one real,
+reliable agent (Claude, see src/app.py's reasoning-provider order) whose
+own single "approve" is the whole decision. MIN_APPROVALS below is that
+explicit choice now: 1 out of 1, not a guess.
 
 Documented design decisions this spec left open (see README.md and
 docs/ for mutation-testing on each):
@@ -44,7 +55,7 @@ from ..db.models import Proposal, ProposalStatus
 from .agent import Agent, parse_agent_decision
 
 MAX_ROUNDS = 3
-MIN_APPROVALS = 2  # out of 5 - owner's explicit instruction, see module doc
+MIN_APPROVALS = 1  # out of 1 agent now - owner's explicit instruction, see module doc
 
 
 def run_consensus(conn: sqlite3.Connection, proposal: Proposal, agents: list[Agent]) -> Proposal:

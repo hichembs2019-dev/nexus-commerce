@@ -10,7 +10,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 
-from .agents.agent import AGENT_NAMES, Agent, build_five_agents
+from .agents.agent import AGENT_NAMES, Agent, build_agents
 from .config import Settings
 from .db.database import init_db
 from .integrations.anthropic_client import (
@@ -74,37 +74,43 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
             logger.warning("TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set - using MockTelegramClient")
         telegram = MockTelegramClient()
 
-    # consensus.py requires MIN_APPROVALS real "approve" votes out of
-    # len(agents) (run_consensus), and any agent whose reasoning call errors
-    # auto-degrades to a permanent "reject" (_review_with_fallback) - never
-    # a crash, but also never a vote, for as long as that one agent's
-    # provider keeps failing. So mixing a broken provider in is not a safe
-    # way to "diversify" - found live 2026-10-13 when the Anthropic account
-    # ran out of credit mid-run and every proposal then failed consensus
-    # silently. Gemini (free, verified working live) runs every agent
-    # whenever it's configured, not split with Anthropic, so a real vote
-    # can actually complete. See docs/SOURCES.md "Gemini agent reasoning"
-    # for the live proof and how to mix them again once both are confirmed
-    # healthy (change the two zip()'d lists below).
-    #
-    # Agent count is len(AGENT_NAMES) in src/agents/agent.py (2, as of the
-    # owner's 2026-10-14 experiment - see that module's docstring).
+    # Agent count is len(AGENT_NAMES) in src/agents/agent.py - 1, as of the
+    # owner's 2026-10-18 explicit instruction ("اترك وكيل واحد ... الاذكى"
+    # - leave one agent, the smartest one): see that module's docstring for
+    # the real, measured reason (34/38 real proposals FAILED_CONSENSUS,
+    # zero real orders, under the previous 2-agent/free-tier setup).
     agent_count = len(AGENT_NAMES)
-    # Owner's explicit instruction, 2026-10-15, after watching the real
-    # production logs: Gemini's real error rate (500/429) was so high that
-    # Groq - 200 OK every single time in that same window - was already
-    # carrying almost every real vote through Gemini's own fallback anyway.
-    # "ضع جيميني احتياطي و استعمل الاخر" - Groq is now primary, with Gemini
-    # as ITS fallback, the exact mirror of the wiring this had before. Same
-    # single-agent-own-retry-chain discipline either way - never a
-    # different provider for a different agent mid-round.
-    if not force_mocks and settings.groq_configured:
+    # "الاذكى طبعا" (the smartest, obviously) - Claude (Anthropic) is now
+    # the one agent's PRIMARY reasoning provider, not the last resort it
+    # was under the old multi-agent/free-tier-first wiring (that order
+    # existed to avoid spending real Anthropic balance across several
+    # agents' worth of real API calls per round - moot now that there is
+    # only one agent and one real call per round). Falls back through
+    # Groq then Gemini on a real Anthropic error, same single-agent-own-
+    # retry-chain discipline every provider here already uses - never a
+    # silent swap to a "dumber" provider unless Anthropic itself failed.
+    if not force_mocks and settings.anthropic_configured:
         gemini_fallback = (
             RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model)
             if settings.gemini_configured
             else None
         )
+        groq_fallback = (
+            RealGroqReasoningClient(settings.groq_api_key, settings.groq_model, fallback=gemini_fallback)
+            if settings.groq_configured
+            else gemini_fallback
+        )
         reasoning_clients: list[AgentReasoningClient] = [
+            RealAgentReasoningClient(settings.anthropic_api_key, settings.claude_model, fallback=groq_fallback)
+            for _ in range(agent_count)
+        ]
+    elif not force_mocks and settings.groq_configured:
+        gemini_fallback = (
+            RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model)
+            if settings.gemini_configured
+            else None
+        )
+        reasoning_clients = [
             RealGroqReasoningClient(settings.groq_api_key, settings.groq_model, fallback=gemini_fallback)
             for _ in range(agent_count)
         ]
@@ -112,15 +118,11 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
         reasoning_clients = [
             RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model) for _ in range(agent_count)
         ]
-    elif not force_mocks and settings.anthropic_configured:
-        reasoning_clients = [
-            RealAgentReasoningClient(settings.anthropic_api_key, settings.claude_model) for _ in range(agent_count)
-        ]
     else:
         if not force_mocks:
-            logger.warning("Neither GEMINI_API_KEY nor GROQ_API_KEY nor ANTHROPIC_API_KEY set - using MockAgentReasoningClient for every agent")
+            logger.warning("Neither ANTHROPIC_API_KEY nor GROQ_API_KEY nor GEMINI_API_KEY set - using MockAgentReasoningClient for every agent")
         reasoning_clients = [MockAgentReasoningClient() for _ in range(agent_count)]
-    agents = build_five_agents(reasoning_clients)
+    agents = build_agents(reasoning_clients)
 
     if not force_mocks and settings.anthropic_configured:
         # Web search is still Anthropic-only (see docs/SOURCES.md "Web

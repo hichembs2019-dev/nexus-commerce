@@ -21,20 +21,35 @@ class AgentReasoningClient(ABC):
 
 
 class RealAgentReasoningClient(AgentReasoningClient):
-    def __init__(self, api_key: str, model: str):
+    """Owner's explicit choice as THE single agent's primary reasoning
+    provider (2026-10-18, "الاذكى طبعا" - the smartest one, obviously):
+    see src/app.py's build_app() for the real provider order this now
+    drives. `fallback` mirrors the same single-call-extends-its-own-retry-
+    chain pattern RealGroqReasoningClient/RealGeminiReasoningClient
+    already use, so one agent that IS the whole decision doesn't go
+    silent-reject on a single transient Anthropic API error.
+    """
+
+    def __init__(self, api_key: str, model: str, fallback: AgentReasoningClient | None = None):
         from anthropic import Anthropic
 
         self._client = Anthropic(api_key=api_key)
         self._model = model
+        self._fallback = fallback
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
-        message = self._client.messages.create(
-            model=self._model,
-            max_tokens=1024,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-        return "".join(block.text for block in message.content if hasattr(block, "text"))
+        try:
+            message = self._client.messages.create(
+                model=self._model,
+                max_tokens=1024,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            return "".join(block.text for block in message.content if hasattr(block, "text"))
+        except Exception:
+            if self._fallback is not None:
+                return self._fallback.complete(system_prompt, user_prompt)
+            raise
 
 
 class RealGeminiReasoningClient(AgentReasoningClient):

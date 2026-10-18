@@ -179,15 +179,7 @@ class RealCJClient(CJClient):
     # reproduced failure. This resolves the real default variant's vid
     # before either call that needs one.
     def _resolve_default_vid(self, product_id: str) -> str:
-        import httpx
-
-        response = httpx.get(
-            f"{self._base_url}/product/query",
-            params={"pid": product_id},
-            headers={"CJ-Access-Token": self._get_access_token()},
-            timeout=30,
-        )
-        payload = response.json()
+        payload = self._get_with_retry(f"{self._base_url}/product/query", params={"pid": product_id})
         if not payload.get("result"):
             raise RuntimeError(f"CJ product query failed: {payload.get('message')}")
 
@@ -226,6 +218,36 @@ class RealCJClient(CJClient):
                 time.sleep(self._RETRY_DELAY_SECONDS)
         return last_payload
 
+    # Found live 2026-10-18 on the real production run (GitHub Actions run
+    # 39156960996): price_inventory_review calls get_product() once per
+    # listed product, and the SECOND real call within the same second hit
+    # CJ's real "QPS limit is 1 time/1second" 429 - uncaught, because
+    # get_product() (and _resolve_default_vid(), the other plain GET) had
+    # no retry at all, unlike _post_with_retry() above. One rate-limited
+    # product crashed the whole review step for every remaining product in
+    # the same run. Same real fix as _post_with_retry: retry the exact same
+    # real call, nothing invented.
+    def _get_with_retry(self, url: str, *, params: dict) -> dict:
+        import time
+
+        import httpx
+
+        last_payload: dict = {}
+        for attempt in range(self._MAX_RETRIES):
+            response = httpx.get(
+                url,
+                params=params,
+                headers={"CJ-Access-Token": self._get_access_token()},
+                timeout=30,
+            )
+            payload = response.json()
+            if response.status_code != 429:
+                return payload
+            last_payload = payload
+            if attempt < self._MAX_RETRIES - 1:
+                time.sleep(self._RETRY_DELAY_SECONDS)
+        return last_payload
+
     def get_shipping_cost(self, product_id: str, country: str) -> float:
         # Verified 2026-10-12, vid fix 2026-10-13 - see docs/SOURCES.md
         # "CJ Dropshipping > Shipping cost". "CN" origin and "first option"
@@ -252,15 +274,7 @@ class RealCJClient(CJClient):
         # Product details". Field is "productNameEn" here, not "nameEn" as
         # in search_products()'s listV2 response - confirmed, not assumed
         # to match.
-        import httpx
-
-        response = httpx.get(
-            f"{self._base_url}/product/query",
-            params={"pid": product_id},
-            headers={"CJ-Access-Token": self._get_access_token()},
-            timeout=30,
-        )
-        payload = response.json()
+        payload = self._get_with_retry(f"{self._base_url}/product/query", params={"pid": product_id})
         if not payload.get("result"):
             raise RuntimeError(f"CJ product query failed: {payload.get('message')}")
 

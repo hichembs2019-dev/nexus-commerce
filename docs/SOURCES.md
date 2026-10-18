@@ -1914,3 +1914,43 @@ assumed):
   `FACEBOOK_*`/`INSTAGRAM_*` are configured as of this commit. This entry
   reports what was built and verified against Meta's own docs, not a
   confirmed live result.
+
+## First real GitHub Actions run with real secrets (2026-10-18)
+
+Workflow run `39156960996` (`workflow_dispatch`, triggered to find out what
+was actually configured instead of asking the owner again), read back via
+`get_job_logs` - every claim below is a literal line from that log, not
+inferred.
+
+- **Real secrets configured on GitHub as of this run, from the job's own
+  env dump** (`***` = set, blank = not set): `SHOPIFY_SHOP_URL`,
+  `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `CJ_API_KEY`. Exactly four -
+  matches the owner's own screenshot of GitHub's Secrets page (one `C...`
+  updated 4 minutes before, three `S...` updated 1 hour before). Still
+  blank: `GROQ_API_KEY`, `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`,
+  `TELEGRAM_CHAT_ID`, every marketing secret.
+- **Shopify authentication is real and working**: `POST
+  https://***/admin/oauth/access_token "HTTP/1.1 200 OK"`.
+- **CJ authentication is real and working**: `POST
+  .../authentication/getAccessToken "HTTP/1.1 200 "` - confirms the full
+  key the owner corrected me on (`docs/SOURCES.md` earlier entry, where I
+  wrongly guessed only a hex suffix was the real key) was saved to GitHub
+  correctly and authenticates.
+- **Consequence, stated plainly**: `WARNING:nexus_commerce:Neither
+  GROQ_API_KEY nor GEMINI_API_KEY set - using MockAgentReasoningClient for
+  every agent` and `WARNING:nexus_commerce:TELEGRAM_BOT_TOKEN/
+  TELEGRAM_CHAT_ID not set - using MockTelegramClient`. The single agent is
+  not yet making any real decision, and no real approval message has
+  reached the owner. `new_paid_orders: 0, tracking_updates: 0` - no real
+  Shopify order existed to act on yet either.
+- **Real bug found live, same run**: `price_inventory_review` called
+  `cj.get_product()` for a second product inside the same second and hit
+  CJ's real `429 Too Many Requests, QPS limit is 1 time/1second` -
+  uncaught, because `get_product()` (and `_resolve_default_vid()`) made a
+  bare `httpx.get()` with no retry, unlike `get_shipping_cost()`'s
+  `_post_with_retry()`. Fixed by adding `_get_with_retry()` (mirrors
+  `_post_with_retry()` exactly - same real retry-on-429, nothing invented)
+  and using it in both. Mutation-tested:
+  `test_get_product_retries_once_on_429_then_succeeds` was confirmed to
+  fail with the old bare-`httpx.get()` code restored, then pass again with
+  the fix. Full suite: 167 passed.

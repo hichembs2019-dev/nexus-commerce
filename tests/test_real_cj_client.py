@@ -362,6 +362,41 @@ def test_get_product_parses_a_single_dash_no_spaces_price_range_too(monkeypatch)
     assert product == CJProduct(product_id="P1", title="Multi-variant hoodie", price=22.83)
 
 
+def test_get_product_retries_once_on_429_then_succeeds(monkeypatch):
+    # Found live 2026-10-18 on the real production run (GitHub Actions run
+    # 39156960996): price_inventory_review called get_product() for a
+    # second product within the same second and CJ's real "QPS limit is 1
+    # time/1second" 429 crashed the whole step uncaught - get_product() had
+    # no retry at all, unlike get_shipping_cost's _post_with_retry.
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json, headers, timeout):
+        return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+
+    attempts = {"n": 0}
+
+    def fake_get(url, *, params, headers, timeout):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return _FakeResponse(
+                {"code": 1600200, "result": False, "message": "Too Many Requests, QPS limit is 1 time/1second"}, 429
+            )
+        return _FakeResponse(
+            {"code": 200, "result": True, "data": {"pid": "P1", "productNameEn": "Phone Case", "sellPrice": 5.0}}, 200
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr("time.sleep", lambda *_a, **_k: None)
+
+    product = client.get_product("P1")
+
+    assert product == CJProduct(product_id="P1", title="Phone Case", price=5.0)
+    assert attempts["n"] == 2  # first 429, then a real retry - not a crash
+
+
 def test_get_product_raises_clearly_on_failure(monkeypatch):
     client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
 

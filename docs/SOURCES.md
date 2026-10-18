@@ -2033,3 +2033,45 @@ run never even reached `run_hourly()`.
 - **Still not confirmed**: how large the real backlog is right now (two
   cancelled runs' worth, compounded) or whether 5-per-firing drains it
   fast enough to matter to the owner - the next real runs are the proof.
+
+## Groq and Gemini are separate roles now, never mixed (2026-10-18)
+
+Owner's explicit instruction, after watching the above: "اترك groq
+يشتغل كل شيء لوحده و جيميني يبحث على التسويق" (leave Groq to run
+everything by itself, and Gemini works on marketing) - a deliberate
+reversal of the 2026-10-15 "Groq primary, Gemini its fallback" design
+(itself a reversal of an even earlier Gemini-primary design). The
+mid-decision provider-switching that design relied on is exactly what
+the owner now wants gone.
+
+- `src/app.py`: `RealGroqReasoningClient` is now constructed with no
+  `fallback` at all for the agents' own decision reasoning - if Groq
+  fails live (a real exhausted quota, see the entry above), that
+  proposal's reasoning genuinely fails rather than silently switching to
+  Gemini mid-decision. Gemini still covers agent reasoning standalone
+  only when Groq is not configured at all (a missing provider, not a
+  mix).
+  `app.py` also wires a new, separate `marketing_reasoning_client`
+  (`App.marketing_reasoning_client`) - a dedicated `RealGeminiReasoningClient`
+  when Gemini is configured, `MockAgentReasoningClient` otherwise - used
+  **only** for marketing copy (`workflows/marketing.py`'s
+  `generate_post_copy`), never for any agent's own proposal reasoning.
+- `workflows/pipeline.py`'s `_promote_if_published()` took
+  `agents[0].reasoning_client` (the agents' own, Groq-based client)
+  before this change - it now takes an explicit
+  `marketing_reasoning_client` parameter instead, threaded through
+  `_execute_and_finalize()`, `execute_autonomously()`, and
+  `execute_stuck_awaiting_telegram_proposals()` from
+  `App.marketing_reasoning_client` (`scheduler.py`, `scripts/run_once.py`,
+  `main.py`). `None` (an un-updated caller) falls back to a `Mock`
+  rather than crashing, matching this project's "missing config = mock"
+  convention throughout.
+- **New test file, `tests/test_app.py`** - nothing in this project's
+  suite exercised `build_app()`'s real (non-mock) reasoning-client
+  wiring before this, so nothing would have caught the two providers
+  being mixed back together. Mutation-tested: reintroducing the old
+  `fallback=gemini_fallback` wiring was confirmed to fail
+  `test_groq_runs_agent_reasoning_alone_with_no_gemini_fallback`
+  (`reasoning_client._fallback` was a real `RealGeminiReasoningClient`
+  instead of `None`), then pass again with the fix restored.
+- Full suite: 171 passed (3 new tests).

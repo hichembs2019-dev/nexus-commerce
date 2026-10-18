@@ -1,6 +1,7 @@
 from src.app import App
 from src.db import repository
 from src.db.models import ProposalStatus
+from src.integrations.anthropic_client import MockAgentReasoningClient
 from src.integrations.marketing_client import MarketingRegistry
 from src.integrations.telegram_client import MockTelegramClient
 from src.scheduler import execute_stuck_consensus_reached_proposals
@@ -21,6 +22,7 @@ def _make_app(conn, settings, executor) -> App:
         marketing=MarketingRegistry({}),
         agents=all_approving_agents(),
         executor=executor,
+        marketing_reasoning_client=MockAgentReasoningClient(),
     )
 
 

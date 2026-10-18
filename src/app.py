@@ -48,6 +48,7 @@ class App:
     marketing: MarketingRegistry
     agents: list[Agent]
     executor: Executor
+    marketing_reasoning_client: AgentReasoningClient
 
 
 def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
@@ -94,15 +95,21 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
     # "الاذكى طبعا" briefly put Claude first the same day. Only real cost
     # here now is whatever Groq/Gemini's own free tiers don't cover -
     # Claude is not instantiated for this at all, configured or not.
+    # Owner's explicit instruction, 2026-10-18 ("اترك groq يشتغل كل شيء
+    # لوحده و جيميني يبحث على التسويق" - leave Groq to run everything by
+    # itself, and Gemini works on marketing): Groq no longer falls back to
+    # Gemini mid-decision for agent reasoning - the two providers are now
+    # fully separate roles, never mixed within one proposal's reasoning.
+    # Gemini is wired below as its own, dedicated marketing_reasoning_client
+    # instead. If Groq is not configured at all, Gemini still covers agent
+    # reasoning standalone (a missing provider, not a mix); if Groq IS
+    # configured but fails live (e.g. a real exhausted quota, see
+    # docs/SOURCES.md), that proposal's reasoning genuinely fails rather
+    # than silently switching providers - this is the owner's own explicit
+    # choice, not a gap.
     if not force_mocks and settings.groq_configured:
-        gemini_fallback = (
-            RealGeminiReasoningClient(settings.gemini_api_key, settings.gemini_model)
-            if settings.gemini_configured
-            else None
-        )
         reasoning_clients: list[AgentReasoningClient] = [
-            RealGroqReasoningClient(settings.groq_api_key, settings.groq_model, fallback=gemini_fallback)
-            for _ in range(agent_count)
+            RealGroqReasoningClient(settings.groq_api_key, settings.groq_model) for _ in range(agent_count)
         ]
     elif not force_mocks and settings.gemini_configured:
         reasoning_clients = [
@@ -113,6 +120,17 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
             logger.warning("Neither GROQ_API_KEY nor GEMINI_API_KEY set - using MockAgentReasoningClient for every agent (Claude is deliberately excluded here, see owner's 2026-10-18 instruction)")
         reasoning_clients = [MockAgentReasoningClient() for _ in range(agent_count)]
     agents = build_agents(reasoning_clients)
+
+    # Gemini's dedicated role now (see the comment above): marketing copy
+    # only, never mixed into the agents' own decision reasoning above.
+    if not force_mocks and settings.gemini_configured:
+        marketing_reasoning_client: AgentReasoningClient = RealGeminiReasoningClient(
+            settings.gemini_api_key, settings.gemini_model
+        )
+    else:
+        if not force_mocks:
+            logger.warning("GEMINI_API_KEY not set - using MockAgentReasoningClient for marketing copy")
+        marketing_reasoning_client = MockAgentReasoningClient()
 
     # Owner's instruction, 2026-10-18 ("اترك المجاني و بس" - leave only
     # the free one): the only real web-search implementation this project
@@ -174,4 +192,5 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
         marketing=marketing,
         agents=agents,
         executor=executor,
+        marketing_reasoning_client=marketing_reasoning_client,
     )

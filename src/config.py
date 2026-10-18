@@ -49,9 +49,11 @@ class Settings:
     gemini_model: str = "gemma-4-26b-a4b-it"
 
     # Groq - verified live 2026-10-14, see docs/SOURCES.md "Groq fallback".
-    # Used as RealGeminiReasoningClient's own fallback when Gemini's
-    # retries are exhausted (src/app.py), or standalone if Gemini isn't
-    # configured.
+    # Owner's instruction, 2026-10-18 ("اترك groq يشتغل كل شيء لوحده و
+    # جيميني يبحث على التسويق"): Groq alone runs the agents' own decision
+    # reasoning when configured (no Gemini fallback mid-decision any more -
+    # see src/app.py); Gemini is its own separate client, used only for
+    # marketing copy.
     groq_api_key: str = ""
     groq_model: str = "openai/gpt-oss-120b"
 

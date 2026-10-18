@@ -1,5 +1,6 @@
 from src.db import repository
 from src.db.models import ActionType, ProposalStatus
+from src.integrations.anthropic_client import MockAgentReasoningClient
 from src.integrations.marketing_client import MarketingRegistry, MockMarketingClient
 from src.workflows.pipeline import (
     DecisionResult,
@@ -364,10 +365,13 @@ def test_execute_autonomously_promotes_a_real_published_product_on_configured_pl
         justification="t", cost=0, risk="low", proposed_by="test", settings=settings, agents=agents,
     )
 
-    result = execute_autonomously(conn, proposal, executor, agents, telegram, marketing)
+    marketing_reasoning_client = MockAgentReasoningClient(["check out this slim wallet!"])
+
+    result = execute_autonomously(conn, proposal, executor, agents, telegram, marketing, marketing_reasoning_client)
 
     assert result.proposal.status == ProposalStatus.EXECUTED.value
     assert len(marketing_platform.posts) == 1
+    assert marketing_reasoning_client.calls  # the dedicated Gemini-role client generated the copy
     actions = [row[0] for row in conn.execute("SELECT action FROM audit_log").fetchall()]
     assert "product_promoted" in actions
 

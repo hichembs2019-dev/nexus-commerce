@@ -166,13 +166,27 @@ def _format_sale_notification(proposal: Proposal, result: dict) -> str:
     )
 
 
-def _promote_if_published(conn: sqlite3.Connection, proposal: Proposal, result: dict, agents: list[Agent], marketing: MarketingRegistry | None) -> None:
+def _promote_if_published(
+    conn: sqlite3.Connection,
+    proposal: Proposal,
+    result: dict,
+    marketing: MarketingRegistry | None,
+    marketing_reasoning_client,
+) -> None:
     """Owner's instruction, 2026-10-18: a published product nobody sees
     sells nothing - promote it on every configured real platform right
     after a real, successful PUBLISH_PRODUCT. Respects DRY_RUN (a
     dry_run result never reaches here with real posts) and a missing/empty
     registry (nothing configured yet - see app.py) the same quiet,
     audited way every other "not configured" path in this project does.
+
+    `marketing_reasoning_client` is Gemini's own dedicated role (owner's
+    instruction, 2026-10-18: "اترك groq يشتغل كل شيء لوحده و جيميني يبحث
+    على التسويق" - leave Groq to run everything alone, Gemini works on
+    marketing) - never the agents' own Groq-based reasoning_client, which
+    no longer falls back to Gemini either (see app.py). `None` (a legacy
+    caller that has not been updated) falls back to a Mock rather than
+    crashing, matching this project's "missing config = mock" convention.
     """
     if marketing is None or len(marketing) == 0:
         return
@@ -180,6 +194,10 @@ def _promote_if_published(conn: sqlite3.Connection, proposal: Proposal, result: 
         return
     if not result.get("success") or result.get("dry_run"):
         return
+
+    from ..integrations.anthropic_client import MockAgentReasoningClient
+
+    reasoning_client = marketing_reasoning_client or MockAgentReasoningClient()
 
     # No real public product URL is available here: RealShopifyClient.create_product()
     # (integrations/shopify_client.py) returns only the product's GraphQL id, never
@@ -191,7 +209,7 @@ def _promote_if_published(conn: sqlite3.Connection, proposal: Proposal, result: 
     payload = proposal.payload
     post_results = promote_published_product(
         marketing,
-        agents[0].reasoning_client,
+        reasoning_client,
         title=payload.get("title", ""),
         description=payload.get("description", ""),
         price=payload.get("price", 0),
@@ -213,6 +231,7 @@ def _execute_and_finalize(
     agents: list[Agent],
     telegram_client,
     marketing: MarketingRegistry | None = None,
+    marketing_reasoning_client=None,
 ) -> DecisionResult:
     """Shared by every real execution path (autonomous, catch-up, and the
     legacy Telegram-approve path) so EXECUTED/EXECUTION_FAILED, the audit
@@ -233,7 +252,7 @@ def _execute_and_finalize(
     if proposal.action_type == ActionType.CJ_ORDER.value and result.get("success") and not result.get("dry_run"):
         telegram_client.send_notification(_format_sale_notification(proposal, result))
 
-    _promote_if_published(conn, proposal, result, agents, marketing)
+    _promote_if_published(conn, proposal, result, marketing, marketing_reasoning_client)
 
     executed_proposal = repository.get_proposal(conn, proposal.id)
     correction = review_execution(conn, agents, executed_proposal, result)
@@ -247,6 +266,7 @@ def execute_autonomously(
     agents: list[Agent],
     telegram_client,
     marketing: MarketingRegistry | None = None,
+    marketing_reasoning_client=None,
 ) -> DecisionResult:
     """The only path a brand-new CONSENSUS_REACHED proposal goes through now
     (see scheduler.py) - no Telegram approve/reject step for any
@@ -260,11 +280,16 @@ def execute_autonomously(
     repository.audit(
         conn, actor="autopilot", action="autonomous_execution_started", details={"proposal_id": proposal.id}
     )
-    return _execute_and_finalize(conn, proposal, executor, agents, telegram_client, marketing)
+    return _execute_and_finalize(conn, proposal, executor, agents, telegram_client, marketing, marketing_reasoning_client)
 
 
 def execute_stuck_awaiting_telegram_proposals(
-    conn: sqlite3.Connection, executor: Executor, agents: list[Agent], telegram_client, marketing: MarketingRegistry | None = None
+    conn: sqlite3.Connection,
+    executor: Executor,
+    agents: list[Agent],
+    telegram_client,
+    marketing: MarketingRegistry | None = None,
+    marketing_reasoning_client=None,
 ) -> int:
     """One-time catch-up for any proposal sent to Telegram with real
     Approve/Reject buttons before the full-autonomy change, that the owner
@@ -281,7 +306,7 @@ def execute_stuck_awaiting_telegram_proposals(
             action="awaiting_telegram_auto_executed",
             details={"proposal_id": proposal.id, "reason": "full-autonomy policy change, 2026-10-14"},
         )
-        _execute_and_finalize(conn, proposal, executor, agents, telegram_client, marketing)
+        _execute_and_finalize(conn, proposal, executor, agents, telegram_client, marketing, marketing_reasoning_client)
     return len(stuck)
 
 

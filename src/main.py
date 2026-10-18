@@ -41,7 +41,9 @@ def main() -> None:
     # proposal already sent to Telegram with real buttons that the owner
     # never tapped now executes instead of waiting forever for a tap that,
     # per the owner's own instruction, is never supposed to be required.
-    caught_up = execute_stuck_awaiting_telegram_proposals(app.conn, app.executor, app.agents, app.telegram, app.marketing)
+    caught_up = execute_stuck_awaiting_telegram_proposals(
+        app.conn, app.executor, app.agents, app.telegram, app.marketing, app.marketing_reasoning_client
+    )
     if caught_up:
         logger.warning("executed %d proposal(s) stuck at awaiting_telegram under the new full-autonomy policy", caught_up)
 

@@ -78,7 +78,9 @@ def _execute_if_consensus_reached(app: App, proposal) -> None:
     from .workflows.pipeline import execute_autonomously
 
     if proposal.status == ProposalStatus.CONSENSUS_REACHED.value:
-        execute_autonomously(app.conn, proposal, app.executor, app.agents, app.telegram, app.marketing)
+        execute_autonomously(
+            app.conn, proposal, app.executor, app.agents, app.telegram, app.marketing, app.marketing_reasoning_client
+        )
     # FAILED_CONSENSUS / AUTO_REJECTED proposals are already fully logged by
     # submit_proposal() itself - nothing further to do with them here.
 

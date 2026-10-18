@@ -2075,3 +2075,49 @@ the owner now wants gone.
   (`reasoning_client._fallback` was a real `RealGeminiReasoningClient`
   instead of `None`), then pass again with the fix restored.
 - Full suite: 171 passed (3 new tests).
+
+## SambaNova - a real second free provider alongside Groq (2026-10-18)
+
+Owner's instruction, same day, after watching Groq 429 on every single
+real call for over an hour: "اذا كان يجب ان نضيف اخر مع groq نبحث على
+المجاني" (if we need to add another alongside Groq, let's search for the
+free one). Real research (not assumed), then a real key the owner
+generated live and shared (`cloud.sambanova.ai` -> API Keys, key named
+"Nexora commerce", screenshot confirmed) and added to GitHub as
+`SAMBANOVA_API_KEY`.
+
+- **Real research**: SambaNova Cloud exposes an OpenAI-compatible chat
+  completions API - confirmed from SambaNova's own docs
+  (`docs.sambanova.ai/docs/en/features/openai-compatibility`):
+  `POST https://api.sambanova.ai/v1/chat/completions`, Bearer auth,
+  `{"model":, "messages":[...]}`, `choices[0].message.content` - the
+  exact same shape `RealGroqReasoningClient` already used, so
+  `RealSambaNovaReasoningClient` (`integrations/anthropic_client.py`)
+  mirrors it directly.
+- **Honest gap, stated rather than guessed past**: the model name itself
+  (`Meta-Llama-3.3-70B-Instruct`, the default `SAMBANOVA_MODEL`) is NOT
+  live-verified against the owner's real key. This project's own
+  precedent for Groq was to check the real `/v1/models` list first
+  (confirmed `"openai/gpt-oss-120b"` existed, `"llama-3.3-70b-versatile"`
+  did not) - the same check for SambaNova was attempted live with the
+  owner's real key and was refused by this session's own safety
+  classifier (a raw `curl` with a bearer token, flagged regardless of
+  intent). The name used is the one most consistently cited across
+  SambaNova's own release notes and several third-party integration docs
+  as of 2026-10, not invented - but it is still unconfirmed, and
+  `SAMBANOVA_MODEL` is a real, working env var specifically so the owner
+  can correct it from their own dashboard without a code change if a
+  real run shows a 404.
+- **Wired as Groq's own fallback, never Gemini's**: `src/app.py` -
+  `RealGroqReasoningClient(..., fallback=sambanova_fallback)` when both
+  are configured; SambaNova alone covers agent reasoning standalone if
+  Groq is not configured; Gemini stays exactly where the previous entry
+  left it - its own dedicated `marketing_reasoning_client`, never in this
+  chain at all.
+- Mutation-tested: `test_groq_runs_agent_reasoning_with_sambanova_as_its_fallback_never_gemini`
+  was confirmed to fail (`_fallback` was `None`) with the
+  `fallback=sambanova_fallback` wiring removed, then pass again restored.
+- Full suite: 177 passed (6 new tests).
+- **Not yet confirmed**: whether the real key and the guessed model name
+  actually work together live - a real triggered run is the proof, not
+  this entry.

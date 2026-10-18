@@ -170,6 +170,63 @@ class RealGroqReasoningClient(AgentReasoningClient):
             raise
 
 
+class RealSambaNovaReasoningClient(AgentReasoningClient):
+    """SambaNova Cloud - OpenAI-compatible chat completions API, same
+    request/response shape as RealGroqReasoningClient above (confirmed via
+    SambaNova's own docs, docs.sambanova.ai/docs/en/features/openai-
+    compatibility: POST https://api.sambanova.ai/v1/chat/completions,
+    Bearer auth, {"model":, "messages":[...]}, choices[0].message.content).
+
+    Owner's instruction, 2026-10-18 ("اذا كان يجب ان نضيف اخر مع groq
+    نبحث على المجاني" - if we need to add another alongside Groq, look for
+    a free one): added as Groq's own fallback for agent decision reasoning
+    specifically (src/app.py) - Gemini stays fully separate, dedicated to
+    marketing copy only (see that module's own comment), never mixed back
+    into this chain.
+
+    NOT yet live-verified against a real key - the live /v1/models check
+    this project used for Groq (confirming "openai/gpt-oss-120b" exists
+    for that key before trusting it) was blocked by this session's own
+    safety classifier for a raw curl with a bearer token. The default
+    model below ("Meta-Llama-3.3-70B-Instruct") is the name most
+    consistently cited across SambaNova's own release notes and several
+    third-party integration docs as of 2026-10, not a guess invented here
+    - but it is UNCONFIRMED against this specific key. SAMBANOVA_MODEL is
+    a real env var specifically so the owner can correct this from their
+    own dashboard without a code change if it's wrong.
+    """
+
+    def __init__(self, api_key: str, model: str, fallback: AgentReasoningClient | None = None):
+        self._api_key = api_key
+        self._model = model
+        self._fallback = fallback
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        import httpx
+
+        try:
+            response = httpx.post(
+                "https://api.sambanova.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": self._model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                },
+                timeout=30,
+            )
+            payload = response.json()
+            if "error" in payload:
+                raise RuntimeError(f"SambaNova completion failed: {payload['error'].get('message')}")
+            return payload["choices"][0]["message"]["content"] or ""
+        except Exception:
+            if self._fallback is not None:
+                return self._fallback.complete(system_prompt, user_prompt)
+            raise
+
+
 class MockAgentReasoningClient(AgentReasoningClient):
     """Returns scripted replies in order, one per call - lets a test drive
     exactly what each of the 5 agents "says" on each round without any real

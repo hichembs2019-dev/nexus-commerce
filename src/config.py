@@ -50,12 +50,25 @@ class Settings:
 
     # Groq - verified live 2026-10-14, see docs/SOURCES.md "Groq fallback".
     # Owner's instruction, 2026-10-18 ("اترك groq يشتغل كل شيء لوحده و
-    # جيميني يبحث على التسويق"): Groq alone runs the agents' own decision
-    # reasoning when configured (no Gemini fallback mid-decision any more -
-    # see src/app.py); Gemini is its own separate client, used only for
-    # marketing copy.
+    # جيميني يبحث على التسويق"): Groq runs the agents' own decision
+    # reasoning when configured, with Gemini removed from this chain
+    # entirely (no mid-decision switch to Gemini any more - see
+    # src/app.py; Gemini is its own separate client, used only for
+    # marketing copy). SambaNova (below) is Groq's own fallback for THIS
+    # chain instead, same owner instruction, same day ("اذا كان يجب ان
+    # نضيف اخر مع groq نبحث على المجاني" - if another is needed alongside
+    # Groq, look for a free one).
     groq_api_key: str = ""
     groq_model: str = "openai/gpt-oss-120b"
+
+    # SambaNova - Groq's own fallback for agent decision reasoning (see
+    # the Groq comment above and src/app.py). OpenAI-compatible API,
+    # verified against SambaNova's own docs - see
+    # integrations/anthropic_client.py's RealSambaNovaReasoningClient
+    # docstring for what is and is not confirmed. Get a free key (no
+    # payment method required) from cloud.sambanova.ai -> API Keys.
+    sambanova_api_key: str = ""
+    sambanova_model: str = "Meta-Llama-3.3-70B-Instruct"
 
     # Shopify - Client credentials grant (verified 2026-10-12, see
     # docs/SOURCES.md "Shopify > Client credentials access token"): the app
@@ -129,6 +142,10 @@ class Settings:
         return bool(self.groq_api_key)
 
     @property
+    def sambanova_configured(self) -> bool:
+        return bool(self.sambanova_api_key)
+
+    @property
     def telegram_marketing_configured(self) -> bool:
         return bool(self.telegram_bot_token and self.telegram_marketing_channel_id)
 
@@ -159,6 +176,8 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         gemini_model=_str(os.environ.get("GEMINI_MODEL"), "gemma-4-26b-a4b-it"),
         groq_api_key=os.environ.get("GROQ_API_KEY", ""),
         groq_model=_str(os.environ.get("GROQ_MODEL"), "openai/gpt-oss-120b"),
+        sambanova_api_key=os.environ.get("SAMBANOVA_API_KEY", ""),
+        sambanova_model=_str(os.environ.get("SAMBANOVA_MODEL"), "Meta-Llama-3.3-70B-Instruct"),
         shopify_shop_url=os.environ.get("SHOPIFY_SHOP_URL", ""),
         shopify_client_id=os.environ.get("SHOPIFY_CLIENT_ID", ""),
         shopify_client_secret=os.environ.get("SHOPIFY_CLIENT_SECRET", ""),

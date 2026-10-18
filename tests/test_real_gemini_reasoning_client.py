@@ -5,7 +5,11 @@ real project code.
 """
 from __future__ import annotations
 
-from src.integrations.anthropic_client import RealGeminiReasoningClient, RealGroqReasoningClient
+from src.integrations.anthropic_client import (
+    RealGeminiReasoningClient,
+    RealGroqReasoningClient,
+    RealSambaNovaReasoningClient,
+)
 
 
 class _FakeResponse:
@@ -319,6 +323,96 @@ def test_groq_complete_with_no_fallback_still_raises_on_error(monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_post)
 
     client = RealGroqReasoningClient(api_key="fake-groq-key", model="openai/gpt-oss-120b")
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="boom"):
+        client.complete("sys", "user")
+
+
+def test_groq_falls_back_to_a_real_sambanova_client_on_error(monkeypatch):
+    # Owner's instruction, 2026-10-18 ("اذا كان يجب ان نضيف اخر مع groq
+    # نبحث على المجاني"): SambaNova is Groq's own fallback now (never
+    # Gemini any more - that is dedicated to marketing only).
+    def fake_post(url, *, headers, json, timeout):
+        if url == "https://api.groq.com/openai/v1/chat/completions":
+            raise RuntimeError("groq boom")
+        return _FakeHttpxResponse(
+            {"choices": [{"message": {"role": "assistant", "content": '{"vote": "approve", "reason": "from sambanova"}'}}]}
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    sambanova = RealSambaNovaReasoningClient(api_key="fake-sambanova-key", model="Meta-Llama-3.3-70B-Instruct")
+    client = RealGroqReasoningClient(api_key="fake-groq-key", model="openai/gpt-oss-120b", fallback=sambanova)
+
+    result = client.complete("sys", "user")
+
+    assert result == '{"vote": "approve", "reason": "from sambanova"}'
+
+
+# --- RealSambaNovaReasoningClient ---
+
+
+def test_sambanova_complete_posts_the_messages_and_returns_the_content(monkeypatch):
+    calls = []
+
+    def fake_post(url, *, headers, json, timeout):
+        calls.append((url, headers, json))
+        return _FakeHttpxResponse(
+            {"choices": [{"message": {"role": "assistant", "content": '{"vote": "approve", "reason": "ok"}'}}]}
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    client = RealSambaNovaReasoningClient(api_key="fake-sambanova-key", model="Meta-Llama-3.3-70B-Instruct")
+    result = client.complete("You are agent A1.", "Review this proposal: ...")
+
+    assert result == '{"vote": "approve", "reason": "ok"}'
+    assert len(calls) == 1
+    url, headers, body = calls[0]
+    assert url == "https://api.sambanova.ai/v1/chat/completions"
+    assert headers["Authorization"] == "Bearer fake-sambanova-key"
+    assert body == {
+        "model": "Meta-Llama-3.3-70B-Instruct",
+        "messages": [
+            {"role": "system", "content": "You are agent A1."},
+            {"role": "user", "content": "Review this proposal: ..."},
+        ],
+    }
+
+
+def test_sambanova_complete_raises_clearly_on_a_real_error_response(monkeypatch):
+    def fake_post(url, *, headers, json, timeout):
+        return _FakeHttpxResponse(
+            {"error": {"message": "The model `bad-model` does not exist", "type": "invalid_request_error"}}
+        )
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    client = RealSambaNovaReasoningClient(api_key="fake-sambanova-key", model="bad-model")
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="SambaNova completion failed"):
+        client.complete("sys", "user")
+
+
+def test_sambanova_complete_with_no_fallback_still_raises_on_error(monkeypatch):
+    def fake_post(url, *, headers, json, timeout):
+        raise RuntimeError("boom")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    client = RealSambaNovaReasoningClient(api_key="fake-sambanova-key", model="Meta-Llama-3.3-70B-Instruct")
 
     import pytest
 

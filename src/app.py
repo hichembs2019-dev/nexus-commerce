@@ -18,6 +18,7 @@ from .integrations.anthropic_client import (
     MockAgentReasoningClient,
     RealGeminiReasoningClient,
     RealGroqReasoningClient,
+    RealSambaNovaReasoningClient,
 )
 from .integrations.cj_client import CJClient, MockCJClient, RealCJClient
 from .integrations.marketing_client import (
@@ -101,15 +102,29 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
     # Gemini mid-decision for agent reasoning - the two providers are now
     # fully separate roles, never mixed within one proposal's reasoning.
     # Gemini is wired below as its own, dedicated marketing_reasoning_client
-    # instead. If Groq is not configured at all, Gemini still covers agent
-    # reasoning standalone (a missing provider, not a mix); if Groq IS
-    # configured but fails live (e.g. a real exhausted quota, see
-    # docs/SOURCES.md), that proposal's reasoning genuinely fails rather
-    # than silently switching providers - this is the owner's own explicit
-    # choice, not a gap.
+    # instead.
+    # Same day, follow-up instruction ("اذا كان يجب ان نضيف اخر مع groq
+    # نبحث على المجاني" - if another is needed alongside Groq, find a free
+    # one), after Groq's real account-wide quota exhaustion kept failing
+    # every call (see docs/SOURCES.md): SambaNova (free, no card) is now
+    # Groq's OWN fallback for this chain specifically - still never Gemini,
+    # which stays fully dedicated to marketing. If Groq is not configured
+    # at all, SambaNova or Gemini (in that order) still covers agent
+    # reasoning standalone.
     if not force_mocks and settings.groq_configured:
+        sambanova_fallback = (
+            RealSambaNovaReasoningClient(settings.sambanova_api_key, settings.sambanova_model)
+            if settings.sambanova_configured
+            else None
+        )
         reasoning_clients: list[AgentReasoningClient] = [
-            RealGroqReasoningClient(settings.groq_api_key, settings.groq_model) for _ in range(agent_count)
+            RealGroqReasoningClient(settings.groq_api_key, settings.groq_model, fallback=sambanova_fallback)
+            for _ in range(agent_count)
+        ]
+    elif not force_mocks and settings.sambanova_configured:
+        reasoning_clients = [
+            RealSambaNovaReasoningClient(settings.sambanova_api_key, settings.sambanova_model)
+            for _ in range(agent_count)
         ]
     elif not force_mocks and settings.gemini_configured:
         reasoning_clients = [
@@ -117,7 +132,7 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
         ]
     else:
         if not force_mocks:
-            logger.warning("Neither GROQ_API_KEY nor GEMINI_API_KEY set - using MockAgentReasoningClient for every agent (Claude is deliberately excluded here, see owner's 2026-10-18 instruction)")
+            logger.warning("Neither GROQ_API_KEY, SAMBANOVA_API_KEY nor GEMINI_API_KEY set - using MockAgentReasoningClient for every agent (Claude is deliberately excluded here, see owner's 2026-10-18 instruction)")
         reasoning_clients = [MockAgentReasoningClient() for _ in range(agent_count)]
     agents = build_agents(reasoning_clients)
 

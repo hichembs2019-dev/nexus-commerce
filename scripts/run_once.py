@@ -28,7 +28,7 @@ def main() -> None:
     if resumed:
         logger.warning("executed %d proposal(s) stuck at consensus_reached from before this run", resumed)
 
-    caught_up = execute_stuck_awaiting_telegram_proposals(app.conn, app.executor, app.agents, app.telegram)
+    caught_up = execute_stuck_awaiting_telegram_proposals(app.conn, app.executor, app.agents, app.telegram, app.marketing)
     if caught_up:
         logger.warning("executed %d proposal(s) stuck at awaiting_telegram", caught_up)
 

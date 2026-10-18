@@ -48,9 +48,11 @@ from ..agents.post_execution_review import review_execution
 from ..config import Settings
 from ..db import repository
 from ..db.models import ActionType, Proposal, ProposalStatus
+from ..integrations.marketing_client import MarketingRegistry
 from ..tools.limits import LimitCheckResult, check_margin
 from ..tools.profit_calculator import CostBreakdown
 from .executor import Executor
+from .marketing import promote_published_product
 
 
 def _check_limits(action_type: str, payload: dict) -> LimitCheckResult:
@@ -164,12 +166,53 @@ def _format_sale_notification(proposal: Proposal, result: dict) -> str:
     )
 
 
+def _promote_if_published(conn: sqlite3.Connection, proposal: Proposal, result: dict, agents: list[Agent], marketing: MarketingRegistry | None) -> None:
+    """Owner's instruction, 2026-10-18: a published product nobody sees
+    sells nothing - promote it on every configured real platform right
+    after a real, successful PUBLISH_PRODUCT. Respects DRY_RUN (a
+    dry_run result never reaches here with real posts) and a missing/empty
+    registry (nothing configured yet - see app.py) the same quiet,
+    audited way every other "not configured" path in this project does.
+    """
+    if marketing is None or len(marketing) == 0:
+        return
+    if proposal.action_type != ActionType.PUBLISH_PRODUCT.value:
+        return
+    if not result.get("success") or result.get("dry_run"):
+        return
+
+    # No real public product URL is available here: RealShopifyClient.create_product()
+    # (integrations/shopify_client.py) returns only the product's GraphQL id, never
+    # a storefront handle/slug - result["detail"] is a log string ("product
+    # published: gid://..."), not a URL, and guessing a /products/<slug> link
+    # without the real handle would just post a broken link. Posting with no
+    # link rather than a wrong one - a real follow-up (reading the handle back,
+    # e.g. via get_products()) would fix this properly.
+    payload = proposal.payload
+    post_results = promote_published_product(
+        marketing,
+        agents[0].reasoning_client,
+        title=payload.get("title", ""),
+        description=payload.get("description", ""),
+        price=payload.get("price", 0),
+        image_url=(payload.get("images") or [None])[0],
+        product_url=None,
+    )
+    repository.audit(
+        conn,
+        actor="marketing",
+        action="product_promoted",
+        details={"proposal_id": proposal.id, "results": post_results},
+    )
+
+
 def _execute_and_finalize(
     conn: sqlite3.Connection,
     proposal: Proposal,
     executor: Executor,
     agents: list[Agent],
     telegram_client,
+    marketing: MarketingRegistry | None = None,
 ) -> DecisionResult:
     """Shared by every real execution path (autonomous, catch-up, and the
     legacy Telegram-approve path) so EXECUTED/EXECUTION_FAILED, the audit
@@ -190,6 +233,8 @@ def _execute_and_finalize(
     if proposal.action_type == ActionType.CJ_ORDER.value and result.get("success") and not result.get("dry_run"):
         telegram_client.send_notification(_format_sale_notification(proposal, result))
 
+    _promote_if_published(conn, proposal, result, agents, marketing)
+
     executed_proposal = repository.get_proposal(conn, proposal.id)
     correction = review_execution(conn, agents, executed_proposal, result)
     return DecisionResult(proposal=executed_proposal, correction_proposal=correction)
@@ -201,6 +246,7 @@ def execute_autonomously(
     executor: Executor,
     agents: list[Agent],
     telegram_client,
+    marketing: MarketingRegistry | None = None,
 ) -> DecisionResult:
     """The only path a brand-new CONSENSUS_REACHED proposal goes through now
     (see scheduler.py) - no Telegram approve/reject step for any
@@ -214,11 +260,11 @@ def execute_autonomously(
     repository.audit(
         conn, actor="autopilot", action="autonomous_execution_started", details={"proposal_id": proposal.id}
     )
-    return _execute_and_finalize(conn, proposal, executor, agents, telegram_client)
+    return _execute_and_finalize(conn, proposal, executor, agents, telegram_client, marketing)
 
 
 def execute_stuck_awaiting_telegram_proposals(
-    conn: sqlite3.Connection, executor: Executor, agents: list[Agent], telegram_client
+    conn: sqlite3.Connection, executor: Executor, agents: list[Agent], telegram_client, marketing: MarketingRegistry | None = None
 ) -> int:
     """One-time catch-up for any proposal sent to Telegram with real
     Approve/Reject buttons before the full-autonomy change, that the owner
@@ -235,7 +281,7 @@ def execute_stuck_awaiting_telegram_proposals(
             action="awaiting_telegram_auto_executed",
             details={"proposal_id": proposal.id, "reason": "full-autonomy policy change, 2026-10-14"},
         )
-        _execute_and_finalize(conn, proposal, executor, agents, telegram_client)
+        _execute_and_finalize(conn, proposal, executor, agents, telegram_client, marketing)
     return len(stuck)
 
 

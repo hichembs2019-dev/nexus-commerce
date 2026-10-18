@@ -1,5 +1,6 @@
 from src.db import repository
 from src.db.models import ActionType, ProposalStatus
+from src.integrations.marketing_client import MarketingRegistry, MockMarketingClient
 from src.workflows.pipeline import (
     DecisionResult,
     execute_autonomously,
@@ -345,3 +346,77 @@ def test_execute_stuck_awaiting_telegram_proposals_ignores_other_statuses(conn, 
 
     assert executed_count == 0
     assert repository.get_proposal(conn, proposal.id).status == ProposalStatus.CONSENSUS_REACHED.value
+
+
+# --- Owner's 2026-10-18 instruction ("ابحث انت و قرر الافضل"): promote a
+# real published product on every configured marketing platform.
+
+def test_execute_autonomously_promotes_a_real_published_product_on_configured_platforms(
+    conn, settings, telegram, executor, shopify
+):
+    settings.dry_run = False
+    agents = all_approving_agents()
+    marketing_platform = MockMarketingClient()
+    marketing = MarketingRegistry({"telegram": marketing_platform})
+    proposal = submit_proposal(
+        conn, action_type=ActionType.PUBLISH_PRODUCT.value,
+        payload={"title": "Slim Wallet", "description": "A slim wallet", "price": 19.99, "images": ["https://x/img.jpg"]},
+        justification="t", cost=0, risk="low", proposed_by="test", settings=settings, agents=agents,
+    )
+
+    result = execute_autonomously(conn, proposal, executor, agents, telegram, marketing)
+
+    assert result.proposal.status == ProposalStatus.EXECUTED.value
+    assert len(marketing_platform.posts) == 1
+    actions = [row[0] for row in conn.execute("SELECT action FROM audit_log").fetchall()]
+    assert "product_promoted" in actions
+
+
+def test_execute_autonomously_does_not_promote_in_dry_run(conn, settings, telegram, executor):
+    assert settings.dry_run is True
+    agents = all_approving_agents()
+    marketing_platform = MockMarketingClient()
+    marketing = MarketingRegistry({"telegram": marketing_platform})
+    proposal = submit_proposal(
+        conn, action_type=ActionType.PUBLISH_PRODUCT.value,
+        payload={"title": "x", "description": "d", "price": 9.99, "images": []},
+        justification="t", cost=0, risk="low", proposed_by="test", settings=settings, agents=agents,
+    )
+
+    execute_autonomously(conn, proposal, executor, agents, telegram, marketing)
+
+    assert marketing_platform.posts == []
+
+
+def test_execute_autonomously_does_not_promote_a_cj_order(conn, settings, telegram, executor, cj):
+    settings.dry_run = False
+    agents = all_approving_agents()
+    marketing_platform = MockMarketingClient()
+    marketing = MarketingRegistry({"telegram": marketing_platform})
+    proposal = submit_proposal(
+        conn, action_type=ActionType.CJ_ORDER.value,
+        payload={
+            "shopify_order_id": "SHOP-9",
+            "line_items": [{"cj_product_id": "CJ-1", "quantity": 1}],
+            "shipping_address": {"country": "US"},
+        },
+        justification="t", cost=25.0, risk="low", proposed_by="test", settings=settings, agents=agents,
+    )
+
+    execute_autonomously(conn, proposal, executor, agents, telegram, marketing)
+
+    assert marketing_platform.posts == []
+
+
+def test_execute_autonomously_with_no_marketing_registry_does_not_crash(conn, settings, telegram, executor):
+    settings.dry_run = False
+    agents = all_approving_agents()
+    proposal = submit_proposal(
+        conn, action_type=ActionType.PUBLISH_PRODUCT.value,
+        payload={"title": "x", "description": "d", "price": 9.99},
+        justification="t", cost=0, risk="low", proposed_by="test", settings=settings, agents=agents,
+    )
+
+    result = execute_autonomously(conn, proposal, executor, agents, telegram)  # marketing omitted entirely
+
+    assert result.proposal.status == ProposalStatus.EXECUTED.value

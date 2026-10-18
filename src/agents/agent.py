@@ -99,6 +99,13 @@ class Agent:
         self.name = name
         self._client = reasoning_client
 
+    @property
+    def reasoning_client(self) -> AgentReasoningClient:
+        """Exposed so other real content-generation calls (e.g.
+        workflows/marketing.py's post copy) can reuse this agent's own
+        configured provider instead of wiring a second, separate one."""
+        return self._client
+
     def review(self, proposal: Proposal, prior_round_votes: list[AgentVote]) -> AgentDecision:
         user_prompt = build_review_prompt(
             _summarize_proposal(proposal), _summarize_prior_votes(prior_round_votes)

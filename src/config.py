@@ -73,6 +73,19 @@ class Settings:
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # Marketing - real platform posting after a real product publish, owner's
+    # 2026-10-18 instruction ("ابحث انت و قرر الافضل"). Each is independently
+    # optional (integrations/marketing_client.py's MarketingRegistry only
+    # includes the platforms actually configured). Uses the SAME bot token as
+    # telegram_bot_token above, posted to a different chat_id (a public
+    # channel, not the owner's private approval chat).
+    telegram_marketing_channel_id: str = ""
+    # Facebook Page + Instagram share one Meta access token (see
+    # docs/SOURCES.md "Marketing - real platform research").
+    facebook_page_id: str = ""
+    facebook_page_access_token: str = ""
+    instagram_business_account_id: str = ""
+
     # Pricing (spec SS4/SS6). Owner's explicit instruction, 2026-10-14:
     # MAX_ORDER_COST/DAILY_SPEND_LIMIT are removed entirely - see
     # tools/limits.py's module docstring for why that is safe, not just
@@ -113,6 +126,18 @@ class Settings:
     def groq_configured(self) -> bool:
         return bool(self.groq_api_key)
 
+    @property
+    def telegram_marketing_configured(self) -> bool:
+        return bool(self.telegram_bot_token and self.telegram_marketing_channel_id)
+
+    @property
+    def facebook_configured(self) -> bool:
+        return bool(self.facebook_page_id and self.facebook_page_access_token)
+
+    @property
+    def instagram_configured(self) -> bool:
+        return bool(self.instagram_business_account_id and self.facebook_page_access_token)
+
 
 def load_settings(env_path: str | Path | None = None) -> Settings:
     """Loads .env (if present) then reads os.environ. A missing .env is not
@@ -142,6 +167,10 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         ),
         telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
+        telegram_marketing_channel_id=os.environ.get("TELEGRAM_MARKETING_CHANNEL_ID", ""),
+        facebook_page_id=os.environ.get("FACEBOOK_PAGE_ID", ""),
+        facebook_page_access_token=os.environ.get("FACEBOOK_PAGE_ACCESS_TOKEN", ""),
+        instagram_business_account_id=os.environ.get("INSTAGRAM_BUSINESS_ACCOUNT_ID", ""),
         min_margin=_float(os.environ.get("MIN_MARGIN"), 0.25),
         dry_run=_bool(os.environ.get("DRY_RUN"), True),
         database_path=os.environ.get("DATABASE_PATH", "./nexus_commerce.db"),

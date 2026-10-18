@@ -20,6 +20,13 @@ from .integrations.anthropic_client import (
     RealGroqReasoningClient,
 )
 from .integrations.cj_client import CJClient, MockCJClient, RealCJClient
+from .integrations.marketing_client import (
+    MarketingClient,
+    MarketingRegistry,
+    RealFacebookPageClient,
+    RealInstagramClient,
+    RealTelegramChannelClient,
+)
 from .integrations.shopify_client import MockShopifyClient, RealShopifyClient, ShopifyClient
 from .integrations.supplier_client import SupplierRegistry
 from .integrations.telegram_client import MockTelegramClient, RealTelegramClient, TelegramClient
@@ -38,6 +45,7 @@ class App:
     suppliers: SupplierRegistry
     telegram: TelegramClient
     web_search: WebSearchTool
+    marketing: MarketingRegistry
     agents: list[Agent]
     executor: Executor
 
@@ -128,6 +136,33 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
     suppliers = SupplierRegistry({"cj": cj})
     executor = Executor(shopify, suppliers, settings)
 
+    # Marketing - each platform independently optional (see
+    # integrations/marketing_client.py and config.py's own docstrings for
+    # why these three and not X/Pinterest). An empty registry is a real,
+    # valid state (nothing configured yet) - workflows/pipeline.py's
+    # _promote_if_published() already treats len(registry) == 0 as "nothing
+    # to do", not an error, so this never needs a Mock fallback the way the
+    # other integrations above do.
+    marketing_platforms: dict[str, MarketingClient] = {}
+    if not force_mocks and settings.telegram_marketing_configured:
+        marketing_platforms["telegram"] = RealTelegramChannelClient(
+            settings.telegram_bot_token, settings.telegram_marketing_channel_id
+        )
+    if not force_mocks and settings.facebook_configured:
+        marketing_platforms["facebook"] = RealFacebookPageClient(
+            settings.facebook_page_id, settings.facebook_page_access_token
+        )
+    if not force_mocks and settings.instagram_configured:
+        marketing_platforms["instagram"] = RealInstagramClient(
+            settings.instagram_business_account_id, settings.facebook_page_access_token
+        )
+    if not force_mocks and not marketing_platforms:
+        logger.warning(
+            "No marketing platform configured (TELEGRAM_MARKETING_CHANNEL_ID/FACEBOOK_*/INSTAGRAM_*) "
+            "- published products will not be promoted anywhere"
+        )
+    marketing = MarketingRegistry(marketing_platforms)
+
     return App(
         settings=settings,
         conn=conn,
@@ -136,6 +171,7 @@ def build_app(settings: Settings, *, force_mocks: bool = False) -> App:
         suppliers=suppliers,
         telegram=telegram,
         web_search=web_search,
+        marketing=marketing,
         agents=agents,
         executor=executor,
     )

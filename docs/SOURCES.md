@@ -1840,3 +1840,77 @@ cache): `actions/cache/save` logged `Path Validation Error: Path(s)
 specified in the action for caching do(es) not exist` - expected given
 the crash, not a second real bug, left as a real observation rather
 than silently dropped.
+
+## Marketing - real platform research, 2026-10-18
+
+Owner's own point, same conversation: "الزبائن تدخل المتجر ان وجد" -
+customers only visit a store that's visible. `discover_new_products`
+can already fill the store with real products; nothing in this project
+ever told anyone outside it the store exists. Instruction: "ابحث انت و
+قرر الافضل" (research it and decide the best).
+
+Checked live (web search + two of Meta's own current docs pages, not
+assumed):
+
+- **X/Twitter**: NOT free any more. As of 2026 it's pay-per-use
+  (roughly $0.01-$0.20/post depending on content; a post with a link is
+  reported at the high end of that range). Contradicts the owner's
+  explicit "free only" instruction (same day, re: Claude/web search) -
+  excluded entirely, not built.
+- **Pinterest**: API itself is free, but public pins need Pinterest's
+  own manual "Standard access" review, with real forum reports (Apr-Jun
+  2026) of applications sitting "pending" for weeks with no owner-side
+  lever to speed it up. Not built - nothing to build until that approval
+  exists for real; the `MarketingClient` interface is generic enough to
+  add a `RealPinterestClient` later with no other code changes.
+- **Facebook Page feed**: real, free Graph API, confirmed from
+  developers.facebook.com "Pages API > Posts" (fetched 2026-10-18):
+  `POST https://graph.facebook.com/v25.0/<page_id>/feed` with
+  `{"message", "link"?, "access_token"}`, returns `{"id": "<page_post_id>"}`.
+- **Instagram**: real, free Graph API, confirmed from
+  developers.facebook.com "Instagram Platform > Content Publishing"
+  (same fetch): two real steps - `POST .../<ig_user_id>/media` with
+  `{"image_url", "caption"}` returns a container id, then
+  `POST .../<ig_user_id>/media_publish` with `{"creation_id"}` returns
+  the real published media id. Image-only - a caption with no image is
+  not publishable on this endpoint (Meta's own constraint, not a
+  limitation added here).
+- **The real unlock for both Meta platforms**: Meta's own docs state
+  that App Review is NOT required when the app only posts to a Page/IG
+  account the owner themselves manages - only "Standard Access" (a
+  self-serve setting), unlike a Tech Provider app serving other
+  businesses, which does need the full review. This directly changes
+  what's buildable right now vs. what needs an unpredictable wait.
+- **Telegram**: already real and free (same bot token as the rest of
+  this project), posting to a separate PUBLIC channel, not the owner's
+  private approval chat.
+
+### Built (`integrations/marketing_client.py`, `workflows/marketing.py`)
+
+- `MarketingClient` interface + `RealTelegramChannelClient`,
+  `RealFacebookPageClient`, `RealInstagramClient`, `MockMarketingClient`,
+  `MarketingRegistry` (mirrors `SupplierRegistry`'s own convention -
+  `post_to_all()` posts to every configured platform independently; one
+  platform's failure never stops the others).
+- `workflows/marketing.py`: `generate_post_copy()` uses the single
+  agent's own reasoning client (`Agent.reasoning_client`, a new public
+  property - `src/agents/agent.py`) to write real post copy, then
+  `promote_published_product()` posts it everywhere configured.
+- Wired into `workflows/pipeline.py`'s `_execute_and_finalize()` via
+  `_promote_if_published()`: fires only after a real (non-`DRY_RUN`),
+  successful `PUBLISH_PRODUCT` execution - never for `CJ_ORDER` or a
+  failed/dry-run publish. An empty/unconfigured registry is a normal
+  state, not an error (nothing to do, logged nowhere, matching
+  `len(marketing) == 0` as the real check).
+- **Real gap found while wiring this, not before**:
+  `RealShopifyClient.create_product()` (`integrations/shopify_client.py`)
+  returns only the product's GraphQL id, never a storefront handle/slug
+  - there is no real public product URL to post as the `link` yet. Fixed
+  by posting with no link rather than guessing a `/products/<slug>` URL
+  that would just be broken - `_promote_if_published()`'s own comment in
+  `pipeline.py` documents this and the real follow-up it needs
+  (read the handle back via `get_products()`).
+- No real post has been sent yet - none of `TELEGRAM_MARKETING_CHANNEL_ID`/
+  `FACEBOOK_*`/`INSTAGRAM_*` are configured as of this commit. This entry
+  reports what was built and verified against Meta's own docs, not a
+  confirmed live result.

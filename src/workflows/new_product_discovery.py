@@ -27,6 +27,7 @@ import sqlite3
 
 from ..agents.agent import Agent
 from ..config import Settings
+from ..db import repository
 from ..db.models import ActionType, Proposal
 from ..integrations.supplier_client import SupplierRegistry
 from ..tools.profit_calculator import CostBreakdown, margin
@@ -74,6 +75,14 @@ def discover_new_products(
     for query in search_queries:
         for supplier_name, candidate in suppliers.search_all(query):
             if candidate.price <= 0:
+                continue
+
+            # Found live 2026-10-18, before deployment: this ran with no
+            # dedup at all - run on a real schedule, the same profitable
+            # search result would be re-proposed and re-published as a
+            # brand new duplicate Shopify listing every single firing. See
+            # repository.publish_product_proposal_exists()'s own docstring.
+            if repository.publish_product_proposal_exists(conn, candidate.product_id):
                 continue
 
             try:

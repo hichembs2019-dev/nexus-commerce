@@ -213,6 +213,26 @@ def test_a_candidate_is_skipped_not_assumed_free_when_the_shipping_quote_fails(
     assert proposals == []
 
 
+def test_a_product_already_published_is_not_proposed_again(conn, settings, cj, suppliers, web_search):
+    # Found live 2026-10-18, before this was ever deployed on a real
+    # schedule: discover_new_products() had no dedup at all against a
+    # candidate already proposed/published - the same profitable CJ
+    # search result would be re-proposed and re-published as a brand new
+    # duplicate Shopify listing every single firing of a real cron.
+    cj.catalog.append(CJProduct(product_id="CJ-1", title="Phone Case", price=5.0))
+
+    first_pass = discover_new_products(
+        conn, suppliers, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
+    )
+    assert len(first_pass) == 1
+
+    second_pass = discover_new_products(
+        conn, suppliers, web_search, settings, agents=all_approving_agents(), search_queries=["phone"]
+    )
+
+    assert second_pass == []
+
+
 def test_a_product_with_a_cj_image_carries_it_into_the_proposal_payload(conn, settings, cj, suppliers, web_search):
     # Found live 2026-10-13: images stayed [] regardless of CJ's own real
     # image data, and the 5 agents correctly rejected a real candidate for

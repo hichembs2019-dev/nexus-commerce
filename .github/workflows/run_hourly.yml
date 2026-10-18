@@ -87,6 +87,22 @@ jobs:
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
           INSTAGRAM_BUSINESS_ACCOUNT_ID: ${{ secrets.INSTAGRAM_BUSINESS_ACCOUNT_ID }}
           DRY_RUN: ${{ secrets.DRY_RUN }}
+          # Found live 2026-10-18, before this was ever actually deployed:
+          # run_once.py only calls run_daily() (discover_new_products -
+          # the ONLY source of a real PUBLISH_PRODUCT, which is the ONLY
+          # trigger for a real marketing post) when RUN_DAILY_TOO=1 - and
+          # nothing in this workflow ever set it. The owner's stated
+          # priority is "يبيع و يشتغل و يعمل في التسويق" (sells, runs, and
+          # does marketing) - marketing could never fire at all without
+          # this, regardless of Groq/Gemini/SambaNova's status, since
+          # discover_new_products() and submit_proposal() don't need agent
+          # reasoning either (see pipeline.py's own docstring - the
+          # pre-execution agent gate was removed entirely on 2026-10-14).
+          # Safe to run every firing now that
+          # repository.publish_product_proposal_exists() stops the same
+          # candidate being re-proposed and re-published as a duplicate
+          # Shopify listing every 10 minutes.
+          RUN_DAILY_TOO: "1"
           DATABASE_PATH: nexus_commerce.db
           # Real bug found live (run 39142048956, workflow_dispatch test,
           # 2026-10-18): `python3 scripts/run_once.py` puts scripts/ on

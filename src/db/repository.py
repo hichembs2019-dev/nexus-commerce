@@ -163,6 +163,33 @@ def order_exists_for_shopify_order(conn: sqlite3.Connection, shopify_order_id: s
     return row is not None
 
 
+def publish_product_proposal_exists(conn: sqlite3.Connection, cj_product_id: str) -> bool:
+    """Found live 2026-10-18, before this was ever deployed: discover_new_products()
+    has no dedup at all against a candidate already proposed/published -
+    unlike every other workflow here (order_fulfillment's own
+    order_exists_for_shopify_order() above, price_inventory_review and
+    tracking_update's own "not re-proposed" checks). Run on a schedule
+    (owner wants new-product-discovery wired into the real 10-minute
+    GitHub Actions cron, not just a once-a-day call nobody triggers), the
+    SAME profitable CJ search result would be found and PUBLISHED AGAIN as
+    a brand new duplicate Shopify listing every single firing - the exact
+    "found live, fixed before it broke something real" pattern this
+    project's whole history follows, just caught before deployment instead
+    of after. `consensus_reached`/`executed` only - a `auto_rejected` or
+    `execution_failed` attempt is allowed to be retried (conditions, e.g. a
+    margin that was briefly negative, can change).
+    """
+    row = conn.execute(
+        """SELECT 1 FROM proposals
+           WHERE action_type = 'publish_product'
+             AND json_extract(payload_json, '$.cj_product_id') = ?
+             AND status IN ('consensus_reached', 'executed')
+           LIMIT 1""",
+        (cj_product_id,),
+    ).fetchone()
+    return row is not None
+
+
 def audit(conn: sqlite3.Connection, *, actor: str, action: str, details: dict) -> None:
     conn.execute(
         "INSERT INTO audit_log (actor, action, details_json) VALUES (?, ?, ?)",

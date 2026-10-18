@@ -2121,3 +2121,76 @@ generated live and shared (`cloud.sambanova.ai` -> API Keys, key named
 - **Not yet confirmed**: whether the real key and the guessed model name
   actually work together live - a real triggered run is the proof, not
   this entry.
+- **Confirmed live, run 39164034995**: the model name guess was NOT the
+  problem - every real call to `https://api.sambanova.ai/v1/chat/completions`
+  returned `HTTP/1.1 402 PAYMENT REQUIRED`, not a 404. The key
+  authenticates; this specific account needs real credits/a payment
+  method to actually use the completions endpoint (matches the "Add
+  credits" banner on the owner's own SambaNova dashboard, screenshot
+  confirmed). Owner's instruction: no payment, under any circumstance
+  ("ليس لي ما ادفع و لا اريد ان ادفع"). SambaNova is left wired in
+  (harmless - it fails fast, ~150-200ms, same as Groq's own 429) rather
+  than ripped out, in case the account is ever topped up later, but it is
+  NOT currently a working fallback. The earlier web research that called
+  SambaNova "genuinely free, no card" was from aggregator/blog sources,
+  not SambaNova's own pricing page - that was a real mistake, called out
+  directly by the owner ("انت تخمن ، تجد و من بعد يظهر بالدفع") and
+  acknowledged as one.
+- **Combined real proof, same run**: with the bounded sweep (`limit=5`),
+  Groq/Gemini role separation, and SambaNova all together, a full real
+  pass - 5 stuck proposals resumed, a real CJ price review of 50
+  products, `run_hourly()` reaching its own summary line - completed in
+  **~2m38s**, down from timing out at both 8 and 20 minutes before. Every
+  real reasoning call this run failed fast (Groq 429, SambaNova 402) and
+  was caught by `post_execution_review()`'s own try/except (see the
+  entry above) rather than crashing or hanging - no real decision was
+  made with real intelligence yet, but the system no longer hangs either.
+- Real Telegram, confirmed the very next run (`39164730789`): the owner
+  created a brand-new bot (`@nexora_commerce_hich_bot`) via `/newbot`,
+  added `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` to GitHub, and that run's
+  own env dump showed both `***` with the `MockTelegramClient` warning
+  gone for the first time - the real approval/notification channel is
+  live.
+
+## The real reason marketing could never fire at all, found before deployment (2026-10-18)
+
+Owner's stated priority, after all of the above: "المهم يبيع و يشتغل و
+يعمل في التسويق" (what matters is it sells, runs, and does marketing).
+Checking that against the real code turned up two real gaps, both fixed
+in the same pass, neither related to Groq/Gemini/SambaNova at all:
+
+- **`run_daily()` (the ONLY source of a real `PUBLISH_PRODUCT`, which is
+  the ONLY trigger for `_promote_if_published()`) never ran on the real
+  GitHub Actions schedule.** `scripts/run_once.py` only calls it when
+  `RUN_DAILY_TOO=1`, and nothing in `.github/workflows/run_hourly.yml`
+  ever set that - marketing could never have posted anything, ever,
+  regardless of which reasoning provider worked. Confirmed this is
+  unrelated to agent reasoning: `discover_new_products()` and
+  `submit_proposal()` don't call agents before executing either (the
+  pre-execution gate was removed entirely on 2026-10-14, see
+  `pipeline.py`'s own docstring) - the gap was purely a missing env var.
+  Fixed by setting `RUN_DAILY_TOO: "1"` in the workflow.
+- **`discover_new_products()` had no dedup at all**, found live via code
+  review before this was ever actually deployed - unlike every other
+  workflow here (`order_fulfillment`'s own
+  `order_exists_for_shopify_order()`, `price_inventory_review` and
+  `tracking_update`'s own "not re-proposed" checks). Turning on
+  `RUN_DAILY_TOO` without this first would have re-proposed and
+  re-published the SAME profitable CJ search result as a brand new
+  duplicate Shopify listing every single 10-minute firing. Fixed with
+  `repository.publish_product_proposal_exists()` (checks
+  `action_type='publish_product'` + the candidate's `cj_product_id` +
+  status in `consensus_reached`/`executed`) called before the costly
+  `get_shipping_cost()` lookup - a `auto_rejected`/`execution_failed`
+  candidate is still allowed to be retried, since conditions (e.g. a
+  margin that was briefly negative) can change.
+- Mutation-tested: `test_a_product_already_published_is_not_proposed_again`
+  was confirmed to fail (a second, duplicate proposal was created) with
+  the dedup check removed, then pass again restored.
+- Full suite: 178 passed (1 new test).
+- **Not yet confirmed**: whether a real product actually gets discovered
+  and published, and a real marketing post actually goes out, on the
+  real 10-minute schedule now that both gaps are fixed - the next real
+  runs are the proof, not this entry. Also not yet measured: how much
+  extra real CJ search/shipping-cost call volume `RUN_DAILY_TOO=1` adds
+  per firing now that it is always on, against CJ's own 1 QPS limit.

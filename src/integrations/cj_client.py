@@ -34,7 +34,9 @@ class TrackingInfo:
 
 class CJClient(ABC):
     @abstractmethod
-    def search_products(self, query: str) -> list[CJProduct]: ...
+    def search_products(self, query: str = "") -> list[CJProduct]:
+        """An empty/default query means "browse everything", not "find
+        nothing" - see RealCJClient's own docstring for why."""
 
     @abstractmethod
     def get_shipping_cost(self, product_id: str, country: str) -> float: ...
@@ -140,15 +142,26 @@ class RealCJClient(CJClient):
             self._access_token = payload["data"]["accessToken"]
         return self._access_token
 
-    def search_products(self, query: str) -> list[CJProduct]:
+    def search_products(self, query: str = "") -> list[CJProduct]:
         # Verified 2026-10-12 - see docs/SOURCES.md "CJ Dropshipping >
         # Product search". Uses listV2 (elasticsearch-backed, supports
-        # keyword search), not the deprecated listV1.
+        # keyword search), not the deprecated listV1. `keyWord` is
+        # documented as OPTIONAL (docs/SOURCES.md - "all optional") - an
+        # empty query omits it entirely rather than sending `keyWord=""`,
+        # so CJ's own default/general listing comes back instead of a
+        # keyword-restricted one. Owner's explicit instruction, 2026-10-19
+        # ("قلت لك كل المنتوجات مادام فيها ارباح" - I told you ALL
+        # products as long as they're profitable): the category-restricted
+        # search was never what was asked for - every product on offer
+        # should be considered, filtered only by real profit (still
+        # enforced downstream in new_product_discovery.py's own margin
+        # check, unchanged here).
         import httpx
 
+        params = {"keyWord": query} if query else {}
         response = httpx.get(
             f"{self._base_url}/product/listV2",
-            params={"keyWord": query},
+            params=params,
             headers={"CJ-Access-Token": self._get_access_token()},
             timeout=30,
         )
@@ -386,7 +399,7 @@ class MockCJClient(CJClient):
         self.tracking: dict[str, TrackingInfo] = {}
         self._next_order_id = 1
 
-    def search_products(self, query: str) -> list[CJProduct]:
+    def search_products(self, query: str = "") -> list[CJProduct]:
         return [p for p in self.catalog if query.lower() in p.title.lower()]
 
     def get_shipping_cost(self, product_id: str, country: str) -> float:

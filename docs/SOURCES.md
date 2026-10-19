@@ -2194,3 +2194,44 @@ in the same pass, neither related to Groq/Gemini/SambaNova at all:
   runs are the proof, not this entry. Also not yet measured: how much
   extra real CJ search/shipping-cost call volume `RUN_DAILY_TOO=1` adds
   per firing now that it is always on, against CJ's own 1 QPS limit.
+- **Confirmed live, run 39206980289** (first real run with
+  `TELEGRAM_MARKETING_CHANNEL_ID` configured, a real public channel
+  "Nexora Commerce Deals" with the bot confirmed as administrator,
+  `can_post_messages: true`): the `No marketing platform configured`
+  warning - present in every single prior run without exception - is
+  **gone**, confirming the marketing registry is live. But
+  `run_daily: {'new_product_discovery': 0}` the same run - the two
+  products found the run before are now correctly deduped, and nothing
+  new cleared the margin check this time. Reported to the owner exactly
+  this honestly (no real marketing post has gone out yet, infrastructure
+  confirmed separately from an actual post) - no inflated claim.
+
+## "كل المنتوجات مادام فيها ارباح" - the category restriction was never asked for (2026-10-19)
+
+Owner's direct correction, after `new_product_discovery: 0`: "قلت لك كل
+المنتوجات مادام فيها ارباح" (I told you ALL products as long as they're
+profitable) - `DEFAULT_DISCOVERY_QUERIES` (`["phone accessories",
+"kitchen gadgets", "pet accessories"]`) had been quietly narrowing every
+search to three arbitrary niches since this workflow's own very first
+commit, never what was actually asked for.
+
+- **Real fix, not a guess**: `keyWord` is documented in CJ's own API as
+  optional (docs/SOURCES.md - "Parameters (all optional; `keyWord` is
+  the one this project sets)"). `RealCJClient.search_products()` now
+  omits `keyWord` entirely when no query is given (never sends
+  `keyWord=""`, a different, untested request shape) - CJ's own general
+  listing comes back instead of a keyword-restricted one.
+  `DEFAULT_DISCOVERY_QUERIES` is now `[""]` - one broad search instead of
+  three narrow ones. The real profit filter in `discover_new_products()`
+  is completely unchanged - every candidate is still only proposed if a
+  real, fee-inclusive margin is positive; only the category gate is
+  gone.
+- Mutation-tested: `test_search_products_with_no_query_omits_keyword_to_browse_everything`
+  was confirmed to fail (`{'keyWord': ''} == {}`) with the conditional
+  removed, then pass with it restored.
+- Full suite: 179 passed (1 new test).
+- **Not yet confirmed**: how many candidates CJ's own unfiltered general
+  listing actually returns per page, or whether a real new profitable
+  product gets found and published (and, for the first time, actually
+  marketed) on the next real run - that run is the proof, not this
+  entry.

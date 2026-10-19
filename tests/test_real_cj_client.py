@@ -114,6 +114,35 @@ def test_get_access_token_retries_once_on_429_then_succeeds(monkeypatch):
     assert attempts["n"] == 2  # first 429, then a real retry - not a crash
 
 
+def test_search_products_with_no_query_omits_keyword_to_browse_everything(monkeypatch):
+    # Owner's explicit instruction, 2026-10-19 ("قلت لك كل المنتوجات مادام
+    # فيها ارباح" - I told you ALL products as long as they're
+    # profitable): an empty query must send NO keyWord param at all
+    # (CJ's own docs: "all optional") so CJ returns its general listing,
+    # not a keyword-restricted (and therefore category-restricted) one.
+    client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
+
+    def fake_post(url, *, json, headers, timeout):
+        return _FakeResponse({"result": True, "data": {"accessToken": "tok"}})
+
+    calls = []
+
+    def fake_get(url, *, params, headers, timeout):
+        calls.append((url, params, headers))
+        return _FakeResponse({"code": 200, "result": True, "data": {"content": []}})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    client.search_products()
+
+    assert len(calls) == 1
+    url, params, headers = calls[0]
+    assert params == {}  # no keyWord at all - never keyWord=""
+
+
 def test_search_products_sends_the_keyword_and_maps_the_real_response_shape(monkeypatch):
     client = RealCJClient("fake-cj-api-key", "https://developers.cjdropshipping.com/api2.0/v1")
 

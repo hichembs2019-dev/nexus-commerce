@@ -15,11 +15,15 @@ from .workflows.tracking_update import update_tracking_numbers
 
 logger = logging.getLogger("nexus_commerce.scheduler")
 
-# Spec gives no fixed product-research query list (that is what the
-# web-search/CJ-search tools are for, not a hardcoded niche) - a small
-# starter list, meant to be replaced with the owner's actual product
-# strategy once this runs for real.
-DEFAULT_DISCOVERY_QUERIES = ["phone accessories", "kitchen gadgets", "pet accessories"]
+# Owner's explicit instruction, 2026-10-19 ("قلت لك كل المنتوجات مادام
+# فيها ارباح" - I told you ALL products as long as they're profitable):
+# the three fixed niche categories this used to carry were never what was
+# asked for and were quietly narrowing every search to a handful of
+# products - "" is CJ's own documented "no keyword" browse-everything
+# query (see CJClient.search_products()'s own docstring), so every real
+# candidate CJ offers is considered, filtered only by the real margin
+# check in discover_new_products() - never by category.
+DEFAULT_DISCOVERY_QUERIES = [""]
 
 
 def run_hourly(app: App) -> dict:
